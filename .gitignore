@@ -1,4 +1,12 @@
+# --- Secrets / environment ---
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# --- Python ---
 __pycache__/
 *.pyc
 *.pyo
@@ -9,5 +17,22 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Local dev storage / media artifacts (never the system of record) ---
+.local-storage/
+local_storage/
+*.sqlite3
+tmp/
+scratch/
+
+# --- Editors / OS ---
 .idea/
 .vscode/
+.DS_Store
