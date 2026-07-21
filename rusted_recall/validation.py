@@ -116,11 +116,12 @@ def validate_repaired_image(
         except Exception:  # noqa: BLE001
             notes.append("could not compute output perceptual hash")
 
-    hard_checks = [v for k, v in checks.items()]
-    passed = all(hard_checks) and not review
+    # Coerce any numpy/bool-like values to native bool for clean JSON serialisation.
+    checks = {k: bool(v) for k, v in checks.items()}
+    passed = all(checks.values()) and not review
     return ValidationResult(
         passed=passed,
-        requires_human_review=review,
+        requires_human_review=bool(review),
         checks=checks,
         notes=notes,
         output_sha256=sha,
