@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Asset Registry — Rusted Recall{% endblock %}
+{% block body %}
+<h1>Asset Registry</h1>
+<p class="sub">Every ingested asset with its immutable versions, hashes and B2 keys.</p>
+{% if assets %}
+<table>
+  <tr><th>Preview</th><th>Asset</th><th>Type</th><th>Status</th><th>Versions</th></tr>
+  {% for a in assets %}
+  <tr>
+    <td>
+      {% set first = a.versions[0] %}
+      {% if first and first.preview_b2_key %}
+        <img class="thumb" src="/obj?key={{ first.preview_b2_key|urlencode }}" alt="preview" />
+      {% endif %}
+    </td>
+    <td>{{ a.asset.name }}<br><span class="muted">{{ a.asset.campaign }}</span></td>
+    <td>{{ a.asset.asset_type }}</td>
+    <td><span class="pill {{ 'completed' if a.asset.publication_status in ['published','active'] else 'draft' }}">{{ a.asset.publication_status }}</span></td>
+    <td>
+      {% for v in a.versions %}
+        <div class="mono">v{{ v.version }} · {{ v.origin }} · {{ v.sha256[:12] }}… · {{ v.width }}×{{ v.height }}</div>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No assets yet. Run the demo seed to populate the LumaLeaf campaign.</p>
+{% endif %}
+{% endblock %}

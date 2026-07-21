@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Recall — Rusted Recall{% endblock %}
+{% block body %}
+<h1>{{ recall.reason }}</h1>
+<p class="sub">
+  Status <span class="pill {{ recall.status }}" id="recall-status">{{ recall.status.replace('_',' ') }}</span>
+  · severity {{ recall.severity }} · markets {{ recall.markets|join(', ') or '—' }}
+</p>
+
+<div class="row" style="align-items:center; gap:12px; margin-bottom:8px">
+  {% if provider.configured %}
+  <form method="post" action="/recalls/{{ recall.id }}/repair"><button class="btn" type="submit">Run repairs →</button></form>
+  {% else %}
+  <span class="banner warn" style="margin:0">Repairs disabled — no provider configured.</span>
+  {% endif %}
+  <a class="btn secondary" href="/recalls/{{ recall.id }}/report.json">JSON</a>
+  <a class="btn secondary" href="/recalls/{{ recall.id }}/report.csv">CSV</a>
+  <a class="btn secondary" href="/recalls/{{ recall.id }}/report.html">HTML</a>
+  <a class="btn secondary" href="/recalls/{{ recall.id }}/report.pdf">PDF</a>
+</div>
+
+<h2>Interactive Impact Map</h2>
+<div class="card">
+  <svg id="graph" width="100%" height="360" style="display:block"></svg>
+</div>
+
+<h2>Impact &amp; Review Queue</h2>
+<table>
+  <tr><th>Asset</th><th>Classification</th><th>Score</th><th>Evidence / path</th><th>Repair job</th><th>Review</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td>
+      {% if row.uploaded and row.uploaded.preview_b2_key %}
+      <img class="thumb" style="width:64px;height:64px" src="/obj?key={{ row.uploaded.preview_b2_key|urlencode }}" />
+      {% endif %}
+      <div>{{ row.asset.name }}</div><div class="muted">{{ row.asset.asset_type }}</div>
+    </td>
+    <td><span class="pill {{ row.impact.classification }}">{{ row.impact.classification.replace('_',' ') }}</span></td>
+    <td class="mono">{{ '%.3f'|format(row.impact.impact_score) }}</td>
+    <td>
+      <div class="mono">{{ row.impact.strongest_path.describe }}</div>
+      <ul class="reasons">{% for r in row.impact.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+    </td>
+    <td class="job" data-asset="{{ row.asset.id }}">
+      {% if row.job %}<span class="pill {{ row.job.status }}">{{ row.job.status }}</span>
+        {% if row.job.error_category %}<div class="muted">{{ row.job.error_category }}</div>{% endif %}
+      {% else %}<span class="muted">—</span>{% endif %}
+    </td>
+    <td>
+      <form method="post" action="/recalls/{{ recall.id }}/review" style="display:flex;gap:6px">
+        <input type="hidden" name="asset_id" value="{{ row.asset.id }}" />
+        <select name="decision" style="width:auto">
+          <option value="approve">approve</option>
+          <option value="exclude">exclude</option>
+          <option value="mark_safe">mark safe</option>
+        </select>
+        <button class="btn secondary" type="submit">Save</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Before / After Gallery</h2>
+<div class="row">
+  {% for row in rows %}
+    {% if row.repaired %}
+    <div class="card" style="width:300px">
+      <div>{{ row.asset.name }}</div>
+      <div class="row" style="gap:8px;margin-top:8px">
+        <div><div class="muted">before</div><img class="thumb" src="/obj?key={{ row.uploaded.b2_key|urlencode }}" /></div>
+        <div><div class="muted">after</div><img class="thumb" src="/obj?key={{ row.repaired.b2_key|urlencode }}" /></div>
+      </div>
+      <div class="mono" style="margin-top:6px">v{{ row.repaired.version }} · {{ row.repaired.sha256[:12] }}…</div>
+      {% if row.repaired.manifest_b2_key %}<a class="mono" href="/obj?key={{ row.repaired.manifest_b2_key|urlencode }}">manifest</a>{% endif %}
+    </div>
+    {% endif %}
+  {% endfor %}
+  {% if not rows|selectattr('repaired')|list %}<p class="muted">No repaired versions yet.</p>{% endif %}
+</div>
+
+<h2>Audit Report</h2>
+<table>
+  <tr><th>Time</th><th>Actor</th><th>Event</th><th>Detail</th></tr>
+  {% for a in audits %}
+  <tr><td class="mono">{{ a.created_at.strftime('%H:%M:%S') }}</td><td>{{ a.actor }}</td>
+      <td>{{ a.event }}</td><td class="mono">{{ a.detail }}</td></tr>
+  {% endfor %}
+</table>
+
+<script id="graph-data" type="application/json">{{ graph|tojson }}</script>
+<script>
+  const g = JSON.parse(document.getElementById('graph-data').textContent);
+  const svg = document.getElementById('graph');
+  const W = svg.clientWidth || 1000, H = 360;
+  const NS = 'http://www.w3.org/2000/svg';
+  const sources = g.nodes.filter(n => n.kind === 'source');
+  const assets = g.nodes.filter(n => n.kind === 'asset');
+  const pos = {};
+  sources.forEach((n,i) => pos[n.id] = {x: 120, y: H*(i+1)/(sources.length+1)});
+  assets.forEach((n,i) => pos[n.id] = {x: W-160, y: H*(i+1)/(assets.length+1)});
+  function line(x1,y1,x2,y2,c){const l=document.createElementNS(NS,'line');
+    l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);
+    l.setAttribute('stroke',c);l.setAttribute('stroke-width',1.5);svg.appendChild(l);}
+  g.links.forEach(k => { const a=pos[k.source], b=pos[k.target]; if(!a||!b) return;
+    line(a.x,a.y,b.x,b.y, k.confidence>=0.8?'#d9772e':(k.confidence>=0.5?'#d9a531':'#6b5a48'));
+    const t=document.createElementNS(NS,'text'); t.setAttribute('x',(a.x+b.x)/2); t.setAttribute('y',(a.y+b.y)/2-3);
+    t.setAttribute('fill','#a5937f'); t.setAttribute('font-size','10'); t.textContent=k.type+' '+k.confidence; svg.appendChild(t);
+  });
+  g.nodes.forEach(n => { const p=pos[n.id]; if(!p) return;
+    const c=document.createElementNS(NS,'circle'); c.setAttribute('cx',p.x); c.setAttribute('cy',p.y);
+    c.setAttribute('r',n.kind==='source'?11:8); c.setAttribute('fill',n.kind==='source'?'#b5561f':'#4a86c7');
+    svg.appendChild(c);
+    const t=document.createElementNS(NS,'text'); t.setAttribute('x',p.x+14); t.setAttribute('y',p.y+4);
+    t.setAttribute('fill','#ece3d8'); t.setAttribute('font-size','12'); t.textContent=n.label; svg.appendChild(t);
+  });
+
+  // poll job status while repairing
+  async function poll() {
+    const r = await fetch('/api/recalls/{{ recall.id }}/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    const st = document.getElementById('recall-status');
+    st.textContent = d.recall_status.replace(/_/g,' '); st.className = 'pill ' + d.recall_status;
+    let active = false;
+    d.jobs.forEach(j => {
+      const cell = document.querySelector('.job[data-asset="'+j.asset_id+'"]');
+      if (cell) cell.innerHTML = '<span class="pill '+j.status+'">'+j.status+'</span>' +
+        (j.error_category ? '<div class="muted">'+j.error_category+'</div>' : '');
+      if (['queued','running'].includes(j.status)) active = true;
+    });
+    if (['analysing','repairing','approved'].includes(d.recall_status) || active) setTimeout(poll, 1500);
+    else if (d.jobs.length) setTimeout(() => location.reload(), 1200);
+  }
+  {% if recall.status in ['repairing','approved','analysing'] %}poll();{% endif %}
+</script>
+{% endblock %}

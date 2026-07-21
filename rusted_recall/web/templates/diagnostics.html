@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics — Rusted Recall{% endblock %}
+{% block body %}
+<h1>Diagnostics</h1>
+<p class="sub">Runtime configuration and scoring parameters. No secrets are shown.</p>
+
+<h2>Capabilities</h2>
+<table>
+  <tr><th>Component</th><th>State</th></tr>
+  <tr><td>App environment</td><td>{{ settings.app_env }}</td></tr>
+  <tr><td>Image provider ({{ provider.provider }})</td><td><span class="pill {{ 'completed' if provider.configured else 'failed' }}">{{ 'configured' if provider.configured else 'not configured' }}</span></td></tr>
+  <tr><td>Model</td><td class="mono">{{ provider.model }}</td></tr>
+  <tr><td>Genblaze pipeline</td><td>{{ 'enabled' if provider.genblaze_enabled else 'disabled' }}</td></tr>
+  <tr><td>Backblaze B2</td><td><span class="pill {{ 'completed' if b2_configured else 'draft' }}">{{ 'configured' if b2_configured else 'local dev storage' }}</span></td></tr>
+  <tr><td>OCR (tesseract)</td><td>{{ 'available' if ocr_available else 'unavailable (declared text used)' }}</td></tr>
+  <tr><td>Demo repair cap</td><td>{{ settings.demo_max_repairs_per_recall }} per recall</td></tr>
+</table>
+
+<h2>Evidence weights</h2>
+<table>
+  <tr><th>Component</th><th>Weight</th></tr>
+  {% for k, v in weights.items() %}<tr><td>{{ k }}</td><td class="mono">{{ v }}</td></tr>{% endfor %}
+</table>
+
+<h2>Classification thresholds</h2>
+<table>
+  <tr><th>Class</th><th>Min score</th></tr>
+  {% for k, v in thresholds.items() %}<tr><td>{{ k.replace('_',' ') }}</td><td class="mono">{{ v }}</td></tr>{% endfor %}
+</table>
+{% endblock %}
