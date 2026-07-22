@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -151,12 +153,12 @@ def command_center(request: Request) -> HTMLResponse:
     st = get_settings()
     with session_scope() as session:
         ws = _default_workspace(session)
-        recalls = []
+        recalls: list[RecallEvent] = []
         stats = {"assets": 0, "sources": 0, "recalls": 0, "repaired": 0}
         if ws:
-            recalls = session.execute(
+            recalls = list(session.execute(
                 select(RecallEvent).where(RecallEvent.workspace_id == ws.id).order_by(RecallEvent.created_at.desc())
-            ).scalars().all()
+            ).scalars().all())
             stats["assets"] = session.scalar(select(func.count()).select_from(Asset).where(Asset.workspace_id == ws.id)) or 0
             stats["sources"] = session.scalar(select(func.count()).select_from(SourceOfTruthItem).where(SourceOfTruthItem.workspace_id == ws.id)) or 0
             stats["recalls"] = len(recalls)
@@ -277,6 +279,8 @@ def recall_detail(request: Request, recall_id: str) -> HTMLResponse:
         rows = []
         for imp in impacts:
             asset = session.get(Asset, imp.asset_id)
+            if asset is None:
+                continue
             uploaded = session.execute(
                 select(AssetVersion).where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded").order_by(AssetVersion.version)
             ).scalars().first()
@@ -385,8 +389,10 @@ def recall_status(recall_id: str) -> JSONResponse:
 
 # --- reports --------------------------------------------------------------
 
-_REPORT_RENDERERS = {"json": (to_json, "application/json"), "csv": (to_csv, "text/csv"),
-                     "html": (to_html, "text/html"), "pdf": (to_pdf, "application/pdf")}
+_REPORT_RENDERERS: dict[str, tuple[Callable[[Any], str | bytes], str]] = {
+    "json": (to_json, "application/json"), "csv": (to_csv, "text/csv"),
+    "html": (to_html, "text/html"), "pdf": (to_pdf, "application/pdf"),
+}
 
 
 @app.get("/recalls/{recall_id}/report.{fmt}")
@@ -398,6 +404,8 @@ def download_report(recall_id: str, fmt: str) -> Response:
         if recall is None:
             raise HTTPException(404, "recall not found")
         ws = session.get(Workspace, recall.workspace_id)
+        if ws is None:
+            raise HTTPException(404, "workspace not found")
         report = services.build_report(session, ws, recall)
     render, media = _REPORT_RENDERERS[fmt]
     body = render(report)

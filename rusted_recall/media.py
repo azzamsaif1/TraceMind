@@ -26,10 +26,10 @@ def content_type_for(data: bytes) -> str:
 
 def make_preview(data: bytes, max_side: int = 512) -> bytes:
     with Image.open(io.BytesIO(data)) as img:
-        img = img.convert("RGB")
-        img.thumbnail((max_side, max_side))
+        rgb = img.convert("RGB")
+        rgb.thumbnail((max_side, max_side))
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        rgb.save(buf, format="PNG")
         return buf.getvalue()
 
 

@@ -120,4 +120,10 @@ def build_repair_instruction(
     return " ".join(lines)
 
 
-DEFAULT_RETRY_POLICY = {"max_attempts": 3, "base_delay_seconds": 1.0, "backoff": "exponential"}
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY_SECONDS = 1.0
+DEFAULT_RETRY_POLICY = {
+    "max_attempts": RETRY_MAX_ATTEMPTS,
+    "base_delay_seconds": RETRY_BASE_DELAY_SECONDS,
+    "backoff": "exponential",
+}

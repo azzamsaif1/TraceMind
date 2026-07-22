@@ -29,7 +29,11 @@ from rusted_recall.providers.base import (
     ProviderConfigError,
     ProviderError,
 )
-from rusted_recall.repair import DEFAULT_RETRY_POLICY, is_retryable
+from rusted_recall.repair import (
+    RETRY_BASE_DELAY_SECONDS,
+    RETRY_MAX_ATTEMPTS,
+    is_retryable,
+)
 
 logger = get_logger(__name__)
 
@@ -101,7 +105,6 @@ class GenblazePipeline:
 
         stages: list[PipelineStage] = []
         logs: list[str] = []
-        retry_policy = DEFAULT_RETRY_POLICY
 
         with log_context(job_id=job_id, genblaze_pipeline=self.pipeline_id):
             prep = self._stage(stages, "prepare_inputs")
@@ -118,7 +121,7 @@ class GenblazePipeline:
             invoke = self._stage(stages, "provider_invocation")
 
             for provider in providers:
-                for attempt in range(1, int(retry_policy["max_attempts"]) + 1):
+                for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
                     attempts += 1
                     try:
                         logs.append(f"invoking {provider.name} attempt {attempt}")
@@ -129,9 +132,7 @@ class GenblazePipeline:
                         logs.append(f"{provider.name} failed: {exc} ({exc.category})")
                         if not is_retryable(exc.category):
                             break  # try next provider (or fail) — do not retry permanent errors
-                        time.sleep(
-                            float(retry_policy["base_delay_seconds"]) * (2 ** (attempt - 1))
-                        )
+                        time.sleep(RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)))
                 if result is not None:
                     break
 

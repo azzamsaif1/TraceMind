@@ -648,6 +648,8 @@ def execute_repair_job(
     new version + manifest. Never fabricates output on provider failure."""
     asset = session.get(Asset, plan_row.asset_id)
     version = session.get(AssetVersion, plan_row.asset_version_id)
+    if asset is None or version is None:
+        raise ValueError("repair plan references a missing asset or version")
     plan = plan_row.plan
 
     # Idempotency: reuse existing successful job.
@@ -701,7 +703,7 @@ def execute_repair_job(
         gen = GenerationRun(
             repair_job_id=job.id,
             provider=execution.provider_used,
-            model=getattr(execution.result, "model", plan["model"]) if execution.result else plan["model"],
+            model=execution.result.model if execution.result else plan["model"],
             genblaze_pipeline=execution.pipeline_id,
             attempts=execution.attempts,
             stages=[s.as_dict() for s in execution.stages],
@@ -842,11 +844,15 @@ def approve_and_repair(
     jobs: list[RepairJob] = []
     for impact in impacts:
         asset = session.get(Asset, impact.asset_id)
+        if asset is None:
+            continue
         version = session.execute(
             select(AssetVersion)
             .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
             .order_by(AssetVersion.version.desc())
         ).scalars().first()
+        if version is None:
+            continue
         record_review_decision(
             session, recall, asset_id=asset.id, decision="approve", reason="auto-approved high confidence"
         )
