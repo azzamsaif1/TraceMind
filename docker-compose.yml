@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rusted
+      POSTGRES_PASSWORD: rusted
+      POSTGRES_DB: rusted_recall
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rusted"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+psycopg://rusted:rusted@db:5432/rusted_recall
+      # Backblaze B2 (S3-compatible). Provide real values via a .env file.
+      B2_KEY_ID: ${B2_KEY_ID:-}
+      B2_APP_KEY: ${B2_APP_KEY:-}
+      B2_BUCKET_NAME: ${B2_BUCKET_NAME:-}
+      B2_S3_ENDPOINT: ${B2_S3_ENDPOINT:-}
+      B2_REGION: ${B2_REGION:-us-west-004}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-auto}
+      # GMI Cloud image provider.
+      GMICLOUD_API_KEY: ${GMICLOUD_API_KEY:-}
+      GMICLOUD_BASE_URL: ${GMICLOUD_BASE_URL:-https://api.gmi-serving.com}
+      GMICLOUD_MODEL: ${GMICLOUD_MODEL:-gmi/seedream-3.0}
+      GENBLAZE_ENABLED: ${GENBLAZE_ENABLED:-false}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:

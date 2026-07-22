@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Recall Command Center</h1>
+<p class="sub">{% if workspace %}{{ workspace.name }}{% else %}No workspace yet — run the demo seed.{% endif %}</p>
+
+{% if not provider.configured %}
+<div class="banner warn">
+  <strong>Repairs disabled.</strong> No generative-media provider is configured
+  (GMICLOUD_API_KEY missing/placeholder). Ingestion, dependency analysis, impact
+  scoring and reports work; repair execution is disabled until a real key is set.
+</div>
+{% endif %}
+{% if not b2_configured %}
+<div class="banner warn">
+  <strong>Storage:</strong> Backblaze B2 not configured — using local development
+  storage. Set B2 credentials for durable object storage.
+</div>
+{% endif %}
+
+<div class="grid cards">
+  <div class="card"><div class="stat">{{ stats.sources }}</div><div class="lbl">Source items</div></div>
+  <div class="card"><div class="stat">{{ stats.assets }}</div><div class="lbl">Assets</div></div>
+  <div class="card"><div class="stat">{{ stats.recalls }}</div><div class="lbl">Recalls</div></div>
+  <div class="card"><div class="stat">{{ stats.repaired }}</div><div class="lbl">Repaired versions</div></div>
+</div>
+
+<h2>Recall events</h2>
+{% if recalls %}
+<table>
+  <tr><th>Reason</th><th>Severity</th><th>Status</th><th>Created</th><th></th></tr>
+  {% for r in recalls %}
+  <tr>
+    <td>{{ r.reason }}</td>
+    <td>{{ r.severity }}</td>
+    <td><span class="pill {{ r.status }}">{{ r.status.replace('_',' ') }}</span></td>
+    <td class="mono">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+    <td><a href="/recalls/{{ r.id }}">Open →</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No recalls yet. <a href="/recalls/new">Create one</a>.</p>
+{% endif %}
+
+<h2>Provider &amp; storage</h2>
+<table>
+  <tr><th>Component</th><th>State</th></tr>
+  <tr><td>Image provider ({{ provider.provider }})</td><td><span class="pill {{ 'completed' if provider.configured else 'failed' }}">{{ 'configured' if provider.configured else 'not configured' }}</span></td></tr>
+  <tr><td>Genblaze pipeline</td><td>{{ 'enabled' if provider.genblaze_enabled else 'disabled' }}</td></tr>
+  <tr><td>Object storage</td><td>{{ 'Backblaze B2' if storage_is_b2 else 'local development' }}</td></tr>
+</table>
+{% endblock %}

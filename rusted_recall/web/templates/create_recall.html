@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Create Recall — Rusted Recall{% endblock %}
+{% block body %}
+<h1>Create Recall</h1>
+<p class="sub">Declare a change to a source-of-truth item. Rusted Recall analyses impact across every asset.</p>
+
+{% if items %}
+<form method="post" action="/recalls" class="card" style="max-width:640px">
+  <label>Source-of-truth item</label>
+  <select name="source_item_id" id="item">
+    {% for i in items %}
+    <option value="{{ i.item.id }}">{{ i.item.name }} ({{ i.item.type }})</option>
+    {% endfor %}
+  </select>
+
+  <div class="row">
+    <div style="flex:1">
+      <label>Previous version (being recalled)</label>
+      <select name="old_version_id" id="old"></select>
+    </div>
+    <div style="flex:1">
+      <label>New version (source of truth)</label>
+      <select name="new_version_id" id="new"></select>
+    </div>
+  </div>
+
+  <label>Reason for recall</label>
+  <textarea name="reason" rows="2" placeholder="e.g. Claim change: 24-Hour Vitality → Daily Botanical Blend"></textarea>
+
+  <div class="row">
+    <div style="flex:1">
+      <label>Severity</label>
+      <select name="severity"><option>high</option><option>medium</option><option>low</option></select>
+    </div>
+    <div style="flex:1">
+      <label>Markets (comma-separated)</label>
+      <input name="markets" placeholder="US, EU" />
+    </div>
+  </div>
+
+  <div style="margin-top:16px"><button class="btn" type="submit">Analyse impact →</button></div>
+</form>
+
+<script>
+  const data = {
+    {% for i in items %}"{{ i.item.id }}": [{% for v in i.versions %}{"id":"{{ v.id }}","label":"v{{ v.version }} · {{ v.label }}"}{% if not loop.last %},{% endif %}{% endfor %}]{% if not loop.last %},{% endif %}
+    {% endfor %}
+  };
+  const item = document.getElementById('item');
+  const oldSel = document.getElementById('old');
+  const newSel = document.getElementById('new');
+  function fill() {
+    const vs = data[item.value] || [];
+    for (const sel of [oldSel, newSel]) {
+      sel.innerHTML = '';
+      vs.forEach(v => { const o = document.createElement('option'); o.value = v.id; o.textContent = v.label; sel.appendChild(o); });
+    }
+    if (vs.length > 1) newSel.value = vs[vs.length - 1].id;
+  }
+  item.addEventListener('change', fill); fill();
+</script>
+{% else %}
+<div class="banner warn">No source-of-truth items exist yet. Seed the demo dataset first.</div>
+{% endif %}
+{% endblock %}

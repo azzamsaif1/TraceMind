@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Source-of-Truth Registry — Rusted Recall{% endblock %}
+{% block body %}
+<h1>Source-of-Truth Registry</h1>
+<p class="sub">Canonical items whose changes trigger recalls — packages, claims, prices, licensed faces/voices.</p>
+{% if items %}
+<table>
+  <tr><th>Item</th><th>Type</th><th>Region</th><th>Versions</th></tr>
+  {% for i in items %}
+  <tr>
+    <td>{{ i.item.name }}<br><span class="muted">{{ i.item.description }}</span></td>
+    <td>{{ i.item.type }}</td>
+    <td>{{ i.item.region or '—' }}</td>
+    <td>
+      {% for v in i.versions %}
+        <div class="mono">v{{ v.version }} · “{{ v.label }}” · claim: {{ v.claim_text }}</div>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No source-of-truth items yet.</p>
+{% endif %}
+{% endblock %}
