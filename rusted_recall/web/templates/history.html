@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}History · Rusted Recall{% endblock %}
+{% block body %}
+<h1>Recall history</h1>
+<p class="sub">
+  {% if workspace %}Workspace: {{ workspace.name }}{% else %}No workspace{% endif %}
+</p>
+
+{% if recalls %}
+<table>
+  <tr><th>Created</th><th>Reason</th><th>Status</th><th>Affected</th><th></th></tr>
+  {% for r in recalls %}
+  <tr>
+    <td class="mono">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+    <td>{{ r.reason }}</td>
+    <td><span class="pill {{ r.status }}">{{ r.status.replace('_', ' ') }}</span></td>
+    <td>{{ r.impacts | selectattr('classification', 'in', ['directly_affected', 'probably_affected']) | list | length }}</td>
+    <td><a href="/recalls/{{ r.id }}">Open</a> · <a href="/recalls/{{ r.id }}/evidence">Evidence</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No recalls yet. <a href="/recalls/new">Create your first recall</a>.</p>
+{% endif %}
+{% endblock %}

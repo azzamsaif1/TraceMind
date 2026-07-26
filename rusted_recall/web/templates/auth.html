@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ "Sign up" if mode == "signup" else "Sign in" }} · Rusted Recall{% endblock %}
+{% block body %}
+<div style="max-width:420px; margin:40px auto;">
+  <h1>{{ "Create your account" if mode == "signup" else "Sign in" }}</h1>
+  <p class="sub">
+    {% if mode == "signup" %}
+      Start a workspace and connect your sources of truth.
+    {% else %}
+      Welcome back to Rusted Recall.
+    {% endif %}
+  </p>
+
+  {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <form method="post" action="{{ '/signup' if mode == 'signup' else '/login' }}">
+      <label for="email">Work email</label>
+      <input id="email" name="email" type="email" required value="{{ email or '' }}" />
+
+      {% if mode == "signup" %}
+        <label for="name">Your name</label>
+        <input id="name" name="name" type="text" placeholder="Ada Lovelace" />
+
+        <label for="org_name">Organisation name</label>
+        <input id="org_name" name="org_name" type="text" placeholder="Acme Inc." />
+      {% endif %}
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required minlength="8"
+             placeholder="At least 8 characters" />
+
+      <button class="btn" type="submit" style="margin-top:16px; width:100%;">
+        {{ "Create account" if mode == "signup" else "Sign in" }}
+      </button>
+    </form>
+  </div>
+
+  <p class="sub" style="margin-top:18px; text-align:center;">
+    {% if mode == "signup" %}
+      Already have an account? <a href="/login">Sign in</a>
+    {% else %}
+      New to Rusted Recall? <a href="/signup">Create an account</a>
+    {% endif %}
+  </p>
+  <p class="muted" style="text-align:center; font-size:13px;">
+    <a href="/">Browse the public LumaLeaf demo</a> — no account required.
+  </p>
+</div>
+{% endblock %}

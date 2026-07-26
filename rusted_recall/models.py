@@ -38,10 +38,68 @@ class Base(DeclarativeBase):
     pass
 
 
+# --- identity & tenancy (spec sections 25-28) ----------------------------
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    memberships: Mapped[list[OrganisationMembership]] = relationship(back_populates="user")
+
+
+class Organisation(Base):
+    __tablename__ = "organisations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    plan: Mapped[str] = mapped_column(String(20), default="trial")  # trial | pro | business
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    memberships: Mapped[list[OrganisationMembership]] = relationship(back_populates="org")
+    workspaces: Mapped[list[Workspace]] = relationship(back_populates="org")
+
+
+class OrganisationMembership(Base):
+    __tablename__ = "organisation_memberships"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organisations.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="member")  # owner|admin|member|viewer
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    org: Mapped[Organisation] = relationship(back_populates="memberships")
+    user: Mapped[User] = relationship(back_populates="memberships")
+
+
+class UserSession(Base):
+    """Server-side verified session (spec section 27). The opaque token is stored
+    only as a hash; the raw token lives solely in the client's secure cookie."""
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Workspace(Base):
     __tablename__ = "workspaces"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organisations.id"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -49,6 +107,7 @@ class Workspace(Base):
         DateTime(timezone=True), default=_now, onupdate=_now
     )
 
+    org: Mapped[Organisation | None] = relationship(back_populates="workspaces")
     assets: Mapped[list[Asset]] = relationship(back_populates="workspace")
     source_items: Mapped[list[SourceOfTruthItem]] = relationship(back_populates="workspace")
     recalls: Mapped[list[RecallEvent]] = relationship(back_populates="workspace")
@@ -105,6 +164,10 @@ class Asset(Base):
     parent_asset_id: Mapped[str | None] = mapped_column(
         ForeignKey("assets.id"), nullable=True, index=True
     )
+    # How this asset derives from its parent, when applicable: crop | resize |
+    # translate | None. Deterministic derivations (crop/resize) let the Minimal
+    # Repair Planner rebuild the child without a generative operation.
+    derivation_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -203,6 +266,10 @@ class RecallEvent(Base):
     requested_action: Mapped[str] = mapped_column(String(50), default="repair")
     created_by: Mapped[str] = mapped_column(String(120), default="demo-user")
     status: Mapped[str] = mapped_column(String(30), default="draft")
+    # First-class structured ChangeSet (spec section 10) and the computed
+    # Minimal Repair Plan graph (spec section 18), persisted as JSON.
+    changeset: Mapped[dict] = mapped_column(JSON, default=dict)
+    repair_plan_graph: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -225,6 +292,11 @@ class RecallImpact(Base):
     reasons: Mapped[list] = mapped_column(JSON, default=list)
     strongest_path: Mapped[dict] = mapped_column(JSON, default=dict)
     recommended_action: Mapped[str] = mapped_column(String(50), default="")
+    # Change Propagation Engine outputs (spec sections 15-17).
+    propagation_reason: Mapped[str] = mapped_column(Text, default="")
+    causal_explanation: Mapped[str] = mapped_column(Text, default="")
+    repair_requirement: Mapped[str] = mapped_column(String(40), default="")
+    distribution_risk: Mapped[str] = mapped_column(String(20), default="low")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     recall: Mapped[RecallEvent] = relationship(back_populates="impacts")
@@ -332,4 +404,23 @@ class ProviderConfiguration(Base):
     model: Mapped[str] = mapped_column(String(120), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     is_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UsageEvent(Base):
+    """Metered real actions (spec section 48). One row per billable/metered
+    operation, always tied to an organisation + workspace."""
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organisations.id"), nullable=True, index=True
+    )
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    event: Mapped[str] = mapped_column(String(60), index=True)
+    quantity: Mapped[float] = mapped_column(Float, default=1.0)
+    operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

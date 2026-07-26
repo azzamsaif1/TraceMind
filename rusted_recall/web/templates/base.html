@@ -61,12 +61,22 @@
   <header>
     <span class="brand">RUSTED RECALL</span>
     <nav>
-      <a href="/">Command Center</a>
-      <a href="/sources">Source of Truth</a>
-      <a href="/assets">Asset Registry</a>
-      <a href="/recalls/new">Create Recall</a>
+      <a href="/app">Overview</a>
+      <a href="/recalls/new">Recall</a>
+      <a href="/assets">Assets</a>
+      <a href="/sources">Sources</a>
+      <a href="/history">History</a>
+      <a href="/account">Account</a>
       <a href="/diagnostics">Diagnostics</a>
     </nav>
+    <span style="margin-left:auto; font-size:13px;">
+      {% if current_user %}
+        <span class="muted">{{ current_org.name if current_org else '' }} · {{ current_user.email }}</span>
+        <a href="/logout" class="muted" style="margin-left:12px;">Sign out</a>
+      {% else %}
+        <a href="/login">Sign in</a>
+      {% endif %}
+    </span>
   </header>
   <main>
     {% block body %}{% endblock %}
