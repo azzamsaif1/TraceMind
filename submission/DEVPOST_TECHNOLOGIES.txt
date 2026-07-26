@@ -1,0 +1,1 @@
+Python, FastAPI, Jinja2, SQLAlchemy, Alembic, PostgreSQL, SQLite, Backblaze B2 (S3-compatible API), Genblaze, GMI Cloud, boto3, Pillow, imagehash, pytesseract, ReportLab, Docker, Docker Compose, pytest, Ruff, mypy
