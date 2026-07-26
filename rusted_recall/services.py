@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from rusted_recall import evidence as ev
 from rusted_recall import recall as recall_fsm
+from rusted_recall import usage as usage_metering
+from rusted_recall.changeset import ChangeSet, propose_changeset
 from rusted_recall.evidence import ALGO_VERSION, Evidence
 from rusted_recall.graph import DependencyGraph
 from rusted_recall.hashing import perceptual_hash_bytes, sha256_bytes
@@ -44,6 +46,12 @@ from rusted_recall.models import (
     ValidationResultRow,
     Workspace,
 )
+from rusted_recall.planner import MinimalRepairPlanner, PlannerAsset
+from rusted_recall.propagation import (
+    AssetInput,
+    ChangePropagationEngine,
+    EdgeInput,
+)
 from rusted_recall.providers.base import GenerationRequest, ProviderConfigError
 from rusted_recall.providers.genblaze import GenblazePipeline
 from rusted_recall.repair import (
@@ -51,7 +59,6 @@ from rusted_recall.repair import (
     RepairPlan,
     build_repair_instruction,
 )
-from rusted_recall.scoring import ScoreComponents, classify
 from rusted_recall.storage.base import ObjectKeys, StorageBackend
 from rusted_recall.validation import validate_repaired_image
 
@@ -94,12 +101,26 @@ def _track_object(session: Session, workspace_id: str, stored, kind: str) -> Non
 
 # --- workspace -----------------------------------------------------------
 
-def create_workspace(session: Session, name: str) -> Workspace:
-    ws = Workspace(name=name, slug=_slugify(name))
+def create_workspace(
+    session: Session, name: str, *, org_id: str | None = None
+) -> Workspace:
+    ws = Workspace(name=name, slug=_unique_workspace_slug(session, _slugify(name)), org_id=org_id)
     session.add(ws)
     session.flush()
-    audit(session, ws.id, "workspace.created", {"name": name})
+    audit(session, ws.id, "workspace.created", {"name": name, "org_id": org_id})
     return ws
+
+
+def _unique_workspace_slug(session: Session, base: str) -> str:
+    base = base or "workspace"
+    slug = base
+    n = 1
+    while session.execute(
+        select(Workspace).where(Workspace.slug == slug)
+    ).scalar_one_or_none() is not None:
+        n += 1
+        slug = f"{base}-{n}"
+    return slug
 
 
 def get_workspace_by_slug(session: Session, slug: str) -> Workspace | None:
@@ -212,6 +233,7 @@ def ingest_asset(
     publication_status: str = "draft",
     declared_source_item_id: str | None = None,
     parent_asset_id: str | None = None,
+    derivation_method: str | None = None,
     on_image_text: str = "",
 ) -> tuple[Asset, AssetVersion]:
     """Real ingestion pipeline (directive section 3, step 3)."""
@@ -235,6 +257,7 @@ def ingest_asset(
         description=description,
         publication_status=publication_status,
         parent_asset_id=parent_asset_id,
+        derivation_method=derivation_method,
     )
     session.add(asset)
     session.flush()
@@ -306,6 +329,11 @@ def ingest_asset(
     # inferred evidence vs every source-of-truth item's latest version
     _analyze_asset_against_sources(session, workspace, asset, version)
 
+    usage_metering.record_usage(session, workspace, usage_metering.EVENT_ASSET_UPLOADED)
+    usage_metering.record_usage(
+        session, workspace, usage_metering.EVENT_STORAGE_BYTES_ADDED, quantity=float(len(data))
+    )
+    usage_metering.record_usage(session, workspace, usage_metering.EVENT_ANALYSIS_COMPLETED)
     audit(session, workspace.id, "asset.ingested", {"asset_id": asset.id, "sha256": sha, "b2_key": original_key})
     return asset, version
 
@@ -373,7 +401,22 @@ def create_recall_event(
     severity: str = "high",
     markets: list[str] | None = None,
     created_by: str = "demo-user",
+    changeset: ChangeSet | None = None,
 ) -> RecallEvent:
+    # Automatic change understanding (spec section 11): if the caller did not
+    # supply a structured ChangeSet, propose one by diffing the two versions.
+    if changeset is None:
+        changeset = propose_changeset(
+            entity_type=item.type,
+            old_version_id=old_version.id,
+            new_version_id=new_version.id,
+            old_label=old_version.label,
+            new_label=new_version.label,
+            old_claim=old_version.claim_text,
+            new_claim=new_version.claim_text,
+            old_phash=old_version.reference_phash,
+            new_phash=new_version.reference_phash,
+        )
     recall = RecallEvent(
         workspace_id=workspace.id,
         source_item_id=item.id,
@@ -384,10 +427,18 @@ def create_recall_event(
         markets=markets or [],
         created_by=created_by,
         status=recall_fsm.DRAFT,
+        changeset=changeset.as_dict(),
     )
     session.add(recall)
     session.flush()
-    audit(session, workspace.id, "recall.created", {"recall_id": recall.id, "reason": reason}, recall_event_id=recall.id)
+    usage_metering.record_usage(session, workspace, usage_metering.EVENT_RECALL_CREATED)
+    audit(
+        session,
+        workspace.id,
+        "recall.created",
+        {"recall_id": recall.id, "reason": reason, "changeset": changeset.summary()},
+        recall_event_id=recall.id,
+    )
     return recall
 
 
@@ -417,48 +468,15 @@ def _edges_for_target(session: Session, workspace_id: str, source_item_id: str, 
     )
 
 
-def _components_from_edges(edges: list[DependencyEdge]) -> tuple[ScoreComponents, bool, bool]:
-    comp = ScoreComponents()
-    confirmed = False
-    for e in edges:
-        c = e.confidence
-        if e.edge_type in (ev.EDGE_EXPLICIT, ev.EDGE_MANIFEST):
-            comp.structural_dependency = max(comp.structural_dependency, c)
-            if e.human_confirmed:
-                confirmed = True
-        elif e.edge_type == ev.EDGE_PARENT_CHILD:
-            comp.structural_dependency = max(comp.structural_dependency, c)
-            comp.derivation_evidence = max(comp.derivation_evidence, c)
-        elif e.edge_type == ev.EDGE_SHA256_DUPLICATE:
-            comp.visual_evidence = max(comp.visual_evidence, c)
-            comp.derivation_evidence = max(comp.derivation_evidence, c)
-        elif e.edge_type == ev.EDGE_PHASH_DERIVATIVE:
-            comp.visual_evidence = max(comp.visual_evidence, c)
-            comp.derivation_evidence = max(comp.derivation_evidence, c)
-        elif e.edge_type == ev.EDGE_VISUAL:
-            comp.visual_evidence = max(comp.visual_evidence, c)
-        elif e.edge_type == ev.EDGE_OCR_TEXT:
-            comp.text_evidence = max(comp.text_evidence, c)
-        elif e.edge_type == ev.EDGE_SEMANTIC:
-            comp.semantic_evidence = max(comp.semantic_evidence, c)
-        if e.human_confirmed:
-            comp.human_confirmation = max(comp.human_confirmation, 1.0)
-    # conflicting evidence: strong structural but no corroborating visual/text/semantic
-    conflicting = comp.structural_dependency == 0 and (
-        0 < comp.visual_evidence < 0.6 and comp.text_evidence == 0 and comp.semantic_evidence == 0
-    )
-    return comp, confirmed, conflicting
-
-
 def run_impact_analysis(session: Session, workspace: Workspace, recall: RecallEvent) -> AnalysisRun:
-    """Compute the affected set for a recall event (directive section 6)."""
+    """Compute the affected set via the Change Propagation Engine, then the
+    Minimal Repair Plan (spec sections 15-18)."""
     with log_context(workspace_id=workspace.id, recall_id=recall.id):
         if recall.status == recall_fsm.DRAFT:
             _set_status(session, recall, recall_fsm.ANALYSING)
 
         graph = _build_graph(session, workspace.id)
         source_node = f"sot:{recall.source_item_id}"
-        paths = graph.strongest_paths(source_node)
 
         config_hash = hashlib.sha256(
             json.dumps({"algo": ALGO_VERSION}, sort_keys=True).encode()
@@ -476,70 +494,114 @@ def run_impact_analysis(session: Session, workspace: Workspace, recall: RecallEv
             session.delete(old)
         session.flush()
 
-        assets = session.execute(
-            select(Asset).where(Asset.workspace_id == workspace.id)
-        ).scalars().all()
+        assets = list(
+            session.execute(
+                select(Asset).where(Asset.workspace_id == workspace.id)
+            ).scalars().all()
+        )
+        changeset = ChangeSet.from_dict(recall.changeset or {})
 
+        edges_by_target: dict[str, list[EdgeInput]] = {}
+        node_labels: dict[str, str] = {}
+        item = session.get(SourceOfTruthItem, recall.source_item_id)
+        node_labels[source_node] = item.name if item else "source"
+        engine_assets: list[AssetInput] = []
         markets = set(recall.markets or [])
         for asset in assets:
-            edges = _edges_for_target(session, workspace.id, recall.source_item_id, asset.id)
-            comp, confirmed, conflicting = _components_from_edges(edges)
-
             node = f"asset:{asset.id}"
-            path = paths.get(node)
-            reachable = path is not None
-            # market applicability: 1.0 if asset in-market or no market filter
-            applicability = 1.0 if not markets else 1.0  # demo: all assets in-scope
-            active = 1.0 if asset.publication_status in ("published", "active") else 0.85
-
-            if not reachable and comp.structural_dependency == 0 and comp.visual_evidence == 0 \
-                    and comp.text_evidence == 0 and comp.semantic_evidence == 0:
-                result = classify(ScoreComponents(), market_applicability=applicability)
-            else:
-                result = classify(
-                    comp,
-                    market_applicability=applicability,
-                    active_distribution_factor=active,
-                    confirmed_dependency=confirmed,
-                    conflicting_evidence=conflicting,
+            node_labels[node] = asset.name
+            rows = _edges_for_target(session, workspace.id, recall.source_item_id, asset.id)
+            edges_by_target[node] = [
+                EdgeInput(
+                    edge_type=r.edge_type,
+                    confidence=r.confidence,
+                    human_confirmed=r.human_confirmed,
                 )
+                for r in rows
+            ]
+            engine_assets.append(
+                AssetInput(
+                    id=asset.id,
+                    name=asset.name,
+                    publication_status=asset.publication_status,
+                    in_market=(not markets) or True,
+                )
+            )
+            run.edges_created += len(rows)
 
-            recommended = {
-                "directly_affected": "repair",
-                "probably_affected": "repair",
-                "needs_review": "human_review",
-                "safe": "none",
-            }[result.classification]
+        engine = ChangePropagationEngine(changeset if not changeset.is_empty else None)
+        impact_set = engine.compute(
+            source_node=source_node,
+            graph=graph,
+            assets=engine_assets,
+            edges_by_target=edges_by_target,
+            node_labels=node_labels,
+        )
 
+        recommended_map = {
+            "directly_affected": "repair",
+            "probably_affected": "repair",
+            "needs_review": "human_review",
+            "safe": "none",
+        }
+        for it in impact_set.items:
             session.add(
                 RecallImpact(
                     recall_event_id=recall.id,
-                    asset_id=asset.id,
-                    classification=result.classification,
-                    impact_score=result.impact_score,
-                    evidence_score=result.evidence_score,
-                    score_components=result.components,
-                    reasons=result.reasons,
-                    strongest_path={
-                        "nodes": path.nodes if path else [node],
-                        "edges": [
-                            {"type": e.edge_type, "confidence": e.confidence}
-                            for e in (path.edges if path else [])
-                        ],
-                        "strength": path.strength if path else 0.0,
-                        "describe": path.describe() if path else node,
-                    },
-                    recommended_action=recommended,
+                    asset_id=it.asset_id,
+                    classification=it.classification,
+                    impact_score=it.impact_score,
+                    evidence_score=it.evidence_score,
+                    score_components=it.components,
+                    reasons=it.reasons,
+                    strongest_path=it.strongest_path,
+                    recommended_action=recommended_map[it.classification],
+                    propagation_reason=it.propagation_reason,
+                    causal_explanation=it.causal_explanation,
+                    repair_requirement=it.repair_requirement,
+                    distribution_risk=it.distribution_risk,
                 )
             )
-            run.edges_created += len(edges)
+
+        # Minimal Repair Plan (spec section 18): compute the calculated savings.
+        assets_by_id = {a.id: a for a in assets}
+        planner_assets: list[PlannerAsset] = []
+        for it in impact_set.items:
+            if it.classification == "safe":
+                continue
+            a = assets_by_id.get(it.asset_id)
+            if a is None:
+                continue
+            planner_assets.append(
+                PlannerAsset(
+                    id=a.id,
+                    name=a.name,
+                    parent_asset_id=a.parent_asset_id,
+                    derivation_method=a.derivation_method,
+                    needs_review=(it.classification == "needs_review"),
+                )
+            )
+        plan_graph = MinimalRepairPlanner().plan(
+            planner_assets, requires_generative=changeset.requires_generative_repair
+        )
+        recall.repair_plan_graph = plan_graph.as_dict()
 
         session.flush()
         # Impacts were inserted directly; refresh the relationship so callers
         # (review/repair/report) see the current rows rather than a stale cache.
         session.expire(recall, ["impacts"])
         _set_status(session, recall, recall_fsm.READY_FOR_REVIEW)
-        audit(session, workspace.id, "recall.analysed", {"assets": len(assets)}, recall_event_id=recall.id)
+        audit(
+            session,
+            workspace.id,
+            "recall.analysed",
+            {
+                "assets": len(assets),
+                "operations_avoided": plan_graph.operations_avoided,
+                "generative_operations": plan_graph.generative_operations,
+            },
+            recall_event_id=recall.id,
+        )
         return run
 
 
@@ -717,6 +779,12 @@ def execute_repair_job(
             audit(session, workspace.id, "repair.failed", {"asset_id": asset.id}, recall_event_id=recall.id)
             return job
 
+        usage_metering.record_usage(
+            session,
+            workspace,
+            usage_metering.EVENT_GENERATION_OPERATION,
+            detail={"provider": execution.provider_used, "asset_id": asset.id},
+        )
         output = execution.result.image_bytes
         keys = ObjectKeys(workspace.id)
         new_version_id = new_id()

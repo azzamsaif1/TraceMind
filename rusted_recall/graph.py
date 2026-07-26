@@ -51,12 +51,20 @@ class DependencyGraph:
         return self._out.get(node, [])
 
     def strongest_paths(
-        self, start: str, *, max_depth: int = GRAPH_MAX_DEPTH, decay: float = GRAPH_EDGE_DECAY
+        self,
+        start: str,
+        *,
+        max_depth: int = GRAPH_MAX_DEPTH,
+        decay: float = GRAPH_EDGE_DECAY,
+        allowed_edge_types: frozenset[str] | set[str] | None = None,
     ) -> dict[str, Path]:
         """Return the single strongest path from ``start`` to every reachable node.
 
         Strength = product of edge confidences with a geometric per-hop decay.
-        Cycle-safe: a node is not revisited within the same path.
+        Cycle-safe: a node is not revisited within the same path. When
+        ``allowed_edge_types`` is given, only those edge types are traversed —
+        this is how the Change Propagation Engine respects ChangeSet semantics
+        (spec section 13).
         """
         best: dict[str, Path] = {}
 
@@ -64,6 +72,8 @@ class DependencyGraph:
             if len(edges) >= max_depth:
                 return
             for edge in self.neighbors(node):
+                if allowed_edge_types is not None and edge.edge_type not in allowed_edge_types:
+                    continue
                 if edge.target in nodes:  # avoid cycles within this path
                     continue
                 hop_strength = strength * edge.confidence * (decay ** len(edges))
@@ -77,5 +87,15 @@ class DependencyGraph:
         visit(start, [start], [], 1.0)
         return best
 
-    def reachable(self, start: str, *, max_depth: int = GRAPH_MAX_DEPTH) -> set[str]:
-        return set(self.strongest_paths(start, max_depth=max_depth).keys())
+    def reachable(
+        self,
+        start: str,
+        *,
+        max_depth: int = GRAPH_MAX_DEPTH,
+        allowed_edge_types: frozenset[str] | set[str] | None = None,
+    ) -> set[str]:
+        return set(
+            self.strongest_paths(
+                start, max_depth=max_depth, allowed_edge_types=allowed_edge_types
+            ).keys()
+        )
