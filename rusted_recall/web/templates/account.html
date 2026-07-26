@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Account · Rusted Recall{% endblock %}
+{% block body %}
+<h1>Account &amp; usage</h1>
+<p class="sub">{{ current_user.email }} · {{ current_org.name if current_org else '' }} · plan: {{ plan }}</p>
+
+<h2>This workspace</h2>
+{% if workspace %}
+<div class="grid cards">
+  <div class="card"><div class="stat">{{ usage.get('asset_uploaded', 0)|int }}</div><div class="lbl">Assets uploaded</div></div>
+  <div class="card"><div class="stat">{{ usage.get('analysis_completed', 0)|int }}</div><div class="lbl">Analyses</div></div>
+  <div class="card"><div class="stat">{{ usage.get('recall_created', 0)|int }}</div><div class="lbl">Recalls</div></div>
+  <div class="card"><div class="stat">{{ usage.get('generation_operation', 0)|int }}</div><div class="lbl">Generative operations</div></div>
+  <div class="card"><div class="stat">{{ (usage.get('storage_bytes_added', 0) / 1048576)|round(1) }}</div><div class="lbl">MB stored</div></div>
+</div>
+{% else %}
+<p class="muted">No workspace yet. <a href="/onboarding">Get started</a>.</p>
+{% endif %}
+
+<h2>Organisation totals</h2>
+<div class="grid cards">
+  <div class="card"><div class="stat">{{ org_usage.get('asset_uploaded', 0)|int }}</div><div class="lbl">Assets (org)</div></div>
+  <div class="card"><div class="stat">{{ org_usage.get('generation_operation', 0)|int }}</div><div class="lbl">Generative ops (org)</div></div>
+  <div class="card"><div class="stat">{{ org_usage.get('recall_created', 0)|int }}</div><div class="lbl">Recalls (org)</div></div>
+</div>
+
+<h2>Plan limits</h2>
+<table>
+  <tr><th>Control</th><th>Limit</th></tr>
+  <tr><td>Assets scanned per recall</td><td>{{ limits.assets_per_recall }}</td></tr>
+  <tr><td>Repairs executed per recall</td><td>{{ limits.repairs_per_recall }}</td></tr>
+</table>
+<p class="muted" style="font-size:13px; margin-top:10px;">
+  Limits protect provider cost in public/judge mode and are enforced server-side.
+</p>
+{% endblock %}

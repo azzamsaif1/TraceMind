@@ -98,7 +98,8 @@ def seed(settings: Settings | None = None) -> dict:
             data=_canvas((642, 402), claim=OLD_CLAIM, subtitle="Feel the 24-Hour Vitality"),
             filename="hero-crop.png", name="Hero Crop (email header)", asset_type="email_header",
             campaign="LumaLeaf Launch", description="cropped hero variant for email header",
-            parent_asset_id=hero.id, on_image_text=OLD_CLAIM, publication_status="published",
+            parent_asset_id=hero.id, derivation_method="crop",
+            on_image_text=OLD_CLAIM, publication_status="published",
         )
         # story format with the claim
         services.ingest_asset(

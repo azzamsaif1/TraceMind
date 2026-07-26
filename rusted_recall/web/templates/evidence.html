@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Technical evidence · Rusted Recall{% endblock %}
+{% block body %}
+<h1>Technical evidence</h1>
+<p class="sub">{{ recall.reason }} · <a href="/recalls/{{ recall.id }}">Back to recall</a></p>
+
+<h2>ChangeSet</h2>
+{% if changeset.get('operations') %}
+<p class="muted" style="font-size:13px;">
+  {{ changeset.get('entity_type', '') }}:
+  {{ changeset.get('previous_version', '') }} → {{ changeset.get('new_version', '') }}
+</p>
+<table>
+  <tr><th>Operation</th><th>Field</th><th>Old</th><th>New</th><th>Confidence</th><th>Inferred</th></tr>
+  {% for op in changeset.get('operations', []) %}
+  <tr>
+    <td class="mono">{{ op.get('type') }}</td>
+    <td>{{ op.get('field', '') }}</td>
+    <td>{{ op.get('old', '') }}</td>
+    <td>{{ op.get('new', '') }}</td>
+    <td>{{ '%.2f'|format(op.get('confidence', 1.0)) }}</td>
+    <td>{{ 'yes' if op.get('inferred') else 'no' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No ChangeSet recorded for this recall.</p>
+{% endif %}
+
+<h2>Minimal repair plan</h2>
+{% if plan %}
+<div class="grid cards">
+  <div class="card"><div class="stat">{{ plan.get('naive_generative_operations', 0) }}</div><div class="lbl">Naive gen ops</div></div>
+  <div class="card"><div class="stat">{{ plan.get('generative_operations', 0) }}</div><div class="lbl">Rusted gen ops</div></div>
+  <div class="card"><div class="stat">{{ plan.get('deterministic_rebuilds', 0) }}</div><div class="lbl">Deterministic rebuilds</div></div>
+  <div class="card"><div class="stat">{{ plan.get('operations_avoided', 0) }}</div><div class="lbl">Operations avoided</div></div>
+  <div class="card"><div class="stat">{{ plan.get('manual_reviews', 0) }}</div><div class="lbl">Manual reviews</div></div>
+</div>
+<p class="muted" style="font-size:13px; margin-top:10px;">
+  Instead of regenerating every affected asset, deterministic crop/resize children are
+  rebuilt from a single repaired master — a calculated, not hardcoded, saving.
+</p>
+{% else %}
+<p class="muted">No repair plan computed.</p>
+{% endif %}
+
+<h2>Per-asset causal explanation</h2>
+<table>
+  <tr><th>Asset</th><th>Class</th><th>Score</th><th>Why (causal)</th><th>Propagation</th><th>Repair</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td>{{ row.asset.name if row.asset else row.impact.asset_id }}</td>
+    <td><span class="pill {{ row.impact.classification }}">{{ row.impact.classification.replace('_', ' ') }}</span></td>
+    <td class="mono">{{ '%.3f'|format(row.impact.impact_score) }}</td>
+    <td style="font-size:13px;">{{ row.impact.causal_explanation }}</td>
+    <td style="font-size:13px;" class="muted">{{ row.impact.propagation_reason }}</td>
+    <td class="mono">{{ row.impact.repair_requirement }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Scoring model</h2>
+<p class="muted" style="font-size:13px;">Evidence weights: {{ weights }}</p>
+<p class="muted" style="font-size:13px;">Classification thresholds: {{ thresholds }}</p>
+{% endblock %}
