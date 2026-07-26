@@ -17,7 +17,18 @@
   <a class="btn secondary" href="/recalls/{{ recall.id }}/report.csv">CSV</a>
   <a class="btn secondary" href="/recalls/{{ recall.id }}/report.html">HTML</a>
   <a class="btn secondary" href="/recalls/{{ recall.id }}/report.pdf">PDF</a>
+  <a class="btn secondary" href="/recalls/{{ recall.id }}/evidence">Technical evidence →</a>
 </div>
+
+{% if recall.repair_plan_graph and recall.repair_plan_graph.get('operations_avoided', 0) %}
+<div class="banner ok">
+  Minimal repair plan: {{ recall.repair_plan_graph.get('generative_operations', 0) }}
+  generative operation(s) instead of
+  {{ recall.repair_plan_graph.get('naive_generative_operations', 0) }} —
+  <strong>{{ recall.repair_plan_graph.get('operations_avoided', 0) }} avoided</strong>
+  via {{ recall.repair_plan_graph.get('deterministic_rebuilds', 0) }} deterministic rebuild(s).
+</div>
+{% endif %}
 
 <h2>Interactive Impact Map</h2>
 <div class="card">

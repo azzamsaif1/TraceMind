@@ -62,6 +62,21 @@ def test_recall_detail_and_impact(client):
     assert "directly affected" in resp.text.replace("_", " ")
 
 
+def test_technical_evidence_page(client):
+    rid = client._recall_id
+    resp = client.get(f"/recalls/{rid}/evidence")
+    assert resp.status_code == 200
+    assert "ChangeSet" in resp.text
+    assert "Minimal repair plan" in resp.text
+
+
+def test_history_and_account_pages(client):
+    assert client.get("/history").status_code == 200
+    # account requires login -> redirect
+    r = client.get("/account", follow_redirects=False)
+    assert r.status_code == 303
+
+
 def test_status_api_and_report(client):
     rid = client._recall_id
     status = client.get(f"/api/recalls/{rid}/status").json()
