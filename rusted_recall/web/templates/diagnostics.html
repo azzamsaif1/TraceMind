@@ -2,19 +2,57 @@
 {% block title %}Diagnostics — Rusted Recall{% endblock %}
 {% block body %}
 <h1>Diagnostics</h1>
-<p class="sub">Runtime configuration and scoring parameters. No secrets are shown.</p>
+<p class="sub">Read-only runtime health, build info and scoring parameters. No secrets are shown.</p>
 
-<h2>Capabilities</h2>
+<h2>Build</h2>
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>App version</td><td class="mono">{{ app_version }}</td></tr>
+  <tr><td>Commit SHA</td><td class="mono">{{ commit_sha }}</td></tr>
+  <tr><td>Environment</td><td>{{ settings.app_env }}</td></tr>
+</table>
+
+<h2>Health</h2>
 <table>
   <tr><th>Component</th><th>State</th></tr>
-  <tr><td>App environment</td><td>{{ settings.app_env }}</td></tr>
-  <tr><td>Image provider ({{ provider.provider }})</td><td><span class="pill {{ 'completed' if provider.configured else 'failed' }}">{{ 'configured' if provider.configured else 'not configured' }}</span></td></tr>
-  <tr><td>Model</td><td class="mono">{{ provider.model }}</td></tr>
-  <tr><td>Genblaze pipeline</td><td>{{ 'enabled' if provider.genblaze_enabled else 'disabled' }}</td></tr>
+  <tr><td>Database</td><td><span class="pill {{ 'completed' if db_health == 'ok' else 'failed' }}">{{ db_health }}</span></td></tr>
+  <tr><td>Storage / B2</td><td class="mono">{{ storage_health }}</td></tr>
   <tr><td>Backblaze B2</td><td><span class="pill {{ 'completed' if b2_configured else 'draft' }}">{{ 'configured' if b2_configured else 'local dev storage' }}</span></td></tr>
+  <tr><td>Worker</td><td class="mono">{{ worker_health }}</td></tr>
+  <tr><td>Image provider ({{ provider.provider }})</td><td><span class="pill {{ 'completed' if provider.configured else 'failed' }}">{{ 'configured' if provider.configured else 'not configured' }}</span></td></tr>
+  <tr><td>Provider model</td><td class="mono">{{ provider.model }}</td></tr>
+  <tr><td>Genblaze pipeline</td><td>{{ 'enabled' if provider.genblaze_enabled else 'disabled' }}</td></tr>
   <tr><td>OCR (tesseract)</td><td>{{ 'available' if ocr_available else 'unavailable (declared text used)' }}</td></tr>
   <tr><td>Demo repair cap</td><td>{{ settings.demo_max_repairs_per_recall }} per recall</td></tr>
 </table>
+
+<h2>Latest provider run</h2>
+{% if latest_run %}
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>Provider</td><td class="mono">{{ latest_run.provider }}</td></tr>
+  <tr><td>Model</td><td class="mono">{{ latest_run.model }}</td></tr>
+  <tr><td>Genblaze pipeline</td><td class="mono">{{ latest_run.pipeline or '—' }}</td></tr>
+  <tr><td>Attempts</td><td>{{ latest_run.attempts }}</td></tr>
+  <tr><td>At</td><td class="mono">{{ latest_run.created_at }}</td></tr>
+</table>
+{% else %}
+<p class="muted">No provider run has executed yet.</p>
+{% endif %}
+
+<h2>Latest B2 write / read-back</h2>
+{% if latest_object %}
+<table>
+  <tr><th>Field</th><th>Value</th></tr>
+  <tr><td>Kind</td><td class="mono">{{ latest_object.kind }}</td></tr>
+  <tr><td>Backend</td><td class="mono">{{ latest_object.backend }}</td></tr>
+  <tr><td>Size</td><td>{{ latest_object.byte_size }} bytes</td></tr>
+  <tr><td>SHA-256 recorded</td><td>{{ 'yes' if latest_object.verified else 'no' }}</td></tr>
+  <tr><td>At</td><td class="mono">{{ latest_object.created_at }}</td></tr>
+</table>
+{% else %}
+<p class="muted">No object has been written yet.</p>
+{% endif %}
 
 <h2>Evidence weights</h2>
 <table>

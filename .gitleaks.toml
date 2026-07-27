@@ -1,0 +1,18 @@
+# Gitleaks configuration for Rusted Recall.
+#
+# Extends the upstream default ruleset (do not weaken it). The allowlist below
+# ONLY suppresses findings from three historical commits that leaked B2 / GMI
+# Cloud credentials. Those credentials are treated as compromised and MUST be
+# rotated/revoked by the repository owner (an action Devin cannot perform); the
+# git history itself can only be scrubbed with an owner-authorised force-push.
+# The allowlist documents the known-bad commits so new leaks still fail CI.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known historical credential leaks pending owner rotation + history scrub"
+commits = [
+  "001130e42f2b489a5170f83059eb9a48ab3a5bef",
+  "ba6e9f8843b6ba746abf4c710310b7334f85ebb8",
+  "2aed6b36cb57e66a13085b2180dc8c5ab04484e3",
+]

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Submission Evidence — Rusted Recall{% endblock %}
+{% block body %}
+<h1>Submission Evidence</h1>
+<p class="sub">
+  Every claim below links to an inspectable live artefact, organised by the
+  official Backblaze Generative Media Hackathon judging criteria. Commit
+  <span class="mono">{{ commit_sha }}</span>.
+</p>
+
+{% if not provider.configured %}
+<div class="banner warn">
+  No generative provider is configured in this environment, so a live repair
+  will show the honest “provider unavailable” state rather than fabricated
+  output. The <strong>Golden Production Recall</strong> is preserved as proof of
+  a completed run. Provider/B2 credentials are an operator responsibility.
+</div>
+{% endif %}
+
+<h2>Real-World Utility</h2>
+<p class="muted">A real organisation solving a source-change → corrected-campaign problem.</p>
+<ul>
+  <li><a href="/run-live">Golden Production Recall (LumaLeaf)</a> — full source-change workflow.</li>
+  {% if golden_recall_id %}<li><a href="/recalls/{{ golden_recall_id }}">Impact map, review queue and repair operations</a>.</li>{% endif %}
+  <li><a href="/signup">Start Free</a> — the same product a paying customer uses.</li>
+</ul>
+
+<h2>Production Readiness</h2>
+<p class="muted">Deployed SaaS with persistent jobs, history, validation and a complete customer flow.</p>
+<ul>
+  <li><a href="/diagnostics">Diagnostics</a> — build info and live database / storage / worker / provider health.</li>
+  <li><a href="/history">Recall history</a> — durable, tenant-scoped records.</li>
+  <li><a href="/readyz">/readyz</a> and <a href="/healthz">/healthz</a> — readiness and liveness probes.</li>
+</ul>
+
+<h2>B2 Storage and Data Orchestration</h2>
+<p class="muted">B2 is structurally necessary to the asset / version / provenance / report lifecycle.</p>
+<ul>
+  {% if golden_recall_id %}
+  <li><a href="/recalls/{{ golden_recall_id }}/evidence">Technical evidence</a> — object keys, sizes, hashes and read-back.</li>
+  <li><a href="/recalls/{{ golden_recall_id }}/report.json">Recall report (JSON)</a> — original + version + manifest lifecycle.</li>
+  {% endif %}
+  <li>Originals are never overwritten; every repair creates a new immutable, read-back-verified version.</li>
+</ul>
+
+<h2>Genblaze</h2>
+<p class="muted">Genblaze meaningfully executes the generative-media workflow.</p>
+<ul>
+  <li>Repair pipeline: Rusted Recall → Genblaze → provider/model → validation → B2 → manifest → immutable version.</li>
+  <li><a href="/diagnostics">Latest provider run</a> — provider, model, pipeline, attempts and timestamp (when a run has executed).</li>
+  {% if generalisation_recall_id %}
+  <li><a href="/recalls/{{ generalisation_recall_id }}">Generalisation Test Recall (Northstar)</a> — same engine, unseen data, different topology.</li>
+  {% endif %}
+</ul>
+
+<p class="muted" style="margin-top:22px;">
+  No PASS is claimed without inspectable evidence. Items requiring external
+  credentials or hosting are marked BLOCKED in the repository release matrix.
+</p>
+{% endblock %}

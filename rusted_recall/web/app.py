@@ -1,6 +1,7 @@
 """Rusted Recall web application (FastAPI + server-rendered UI, directive section 14)."""
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -23,14 +24,17 @@ from rusted_recall.config import (
     validate_scoring_config,
 )
 from rusted_recall.db import create_all, session_scope
+from rusted_recall.demo import seed as demo_seed
 from rusted_recall.jobs import RepairTask, get_runner
 from rusted_recall.logging_setup import configure_logging, get_logger, log_context
 from rusted_recall.media import ocr_available
 from rusted_recall.models import (
+    ArtifactObject,
     Asset,
     AssetVersion,
     AuditEvent,
     DependencyEdge,
+    GenerationRun,
     Organisation,
     RecallEvent,
     RecallImpact,
@@ -108,15 +112,69 @@ def readyz() -> JSONResponse:
     return JSONResponse({"ready": ready, "checks": checks}, status_code=200 if ready else 503)
 
 
+def _commit_sha() -> str:
+    return (
+        os.environ.get("RR_COMMIT_SHA")
+        or os.environ.get("SOURCE_COMMIT")
+        or os.environ.get("RENDER_GIT_COMMIT")
+        or "unknown"
+    )
+
+
 @app.get("/diagnostics", response_class=HTMLResponse)
 def diagnostics(request: Request) -> HTMLResponse:
     st = get_settings()
+    # Live health probes (spec section 22) — read-only, never expose secrets.
+    db_health = "ok"
+    try:
+        with session_scope() as s:
+            s.execute(select(func.count()).select_from(Workspace))
+    except Exception as exc:  # noqa: BLE001
+        db_health = f"error: {exc}"
+    storage_health: object
+    try:
+        storage_health = get_storage(st).health_check()
+    except Exception as exc:  # noqa: BLE001
+        storage_health = f"unavailable: {exc}"
+    runner = get_runner()
+    with session_scope() as s:
+        latest_run = s.execute(
+            select(GenerationRun).order_by(GenerationRun.created_at.desc())
+        ).scalars().first()
+        latest_object = s.execute(
+            select(ArtifactObject).order_by(ArtifactObject.created_at.desc())
+        ).scalars().first()
+        run_ctx = None
+        if latest_run is not None:
+            run_ctx = {
+                "provider": latest_run.provider,
+                "model": latest_run.model,
+                "pipeline": latest_run.genblaze_pipeline,
+                "attempts": latest_run.attempts,
+                "created_at": latest_run.created_at,
+            }
+        obj_ctx = None
+        if latest_object is not None:
+            obj_ctx = {
+                "kind": latest_object.kind,
+                "backend": latest_object.backend,
+                "byte_size": latest_object.byte_size,
+                "created_at": latest_object.created_at,
+                "verified": bool(latest_object.sha256),
+            }
     ctx = {
         "request": request,
         "settings": st,
+        "app_version": app.version,
+        "commit_sha": _commit_sha(),
         "provider": provider_status(st),
         "b2_configured": st.b2_configured,
         "ocr_available": ocr_available(),
+        "db_health": db_health,
+        "storage_health": storage_health,
+        "worker_health": type(runner).__name__,
+        "latest_run": run_ctx,
+        "latest_object": obj_ctx,
         "weights": EVIDENCE_WEIGHTS,
         "thresholds": IMPACT_THRESHOLDS,
     }
@@ -328,6 +386,56 @@ def history(request: Request, rr_session: str | None = Cookie(default=None)) -> 
 
 
 @app.get("/", response_class=HTMLResponse)
+def landing(request: Request, rr_session: str | None = Cookie(default=None)) -> HTMLResponse:
+    """Product homepage (spec section 5) — not a technical dashboard."""
+    with session_scope() as session:
+        ctx = _base_ctx(request, session, rr_session)
+        return templates.TemplateResponse(request, "landing.html", ctx)
+
+
+@app.get("/run-live", response_model=None)
+def run_live() -> Response:
+    """Judge entry (spec section 6): seed the production-backed demo if needed
+    and drop the visitor straight into the golden LumaLeaf recall — no account,
+    no configuration."""
+    demo_seed.ensure_seeded(get_settings())
+    rid = demo_seed.golden_recall_id(get_settings())
+    if rid is None:
+        raise HTTPException(500, "demo seed unavailable")
+    return _redirect(f"/recalls/{rid}")
+
+
+@app.get("/generalisation", response_model=None)
+def generalisation() -> Response:
+    """Generalisation Test Recall (spec section 11): the Northstar campaign,
+    a different topology proving the same engine generalises."""
+    demo_seed.ensure_seeded(get_settings())
+    rid = demo_seed.generalisation_recall_id(get_settings())
+    if rid is None:
+        raise HTTPException(500, "generalisation seed unavailable")
+    return _redirect(f"/recalls/{rid}")
+
+
+@app.get("/submission-evidence", response_class=HTMLResponse)
+def submission_evidence(request: Request, rr_session: str | None = Cookie(default=None)) -> HTMLResponse:
+    """Judging-criteria evidence index (spec section 23). Every claim links to
+    an inspectable live artefact rather than asking judges to trust the README."""
+    st = get_settings()
+    with session_scope() as session:
+        demo_seed.ensure_seeded(st)
+        golden = demo_seed.golden_recall_id(st)
+        generalisation_id = demo_seed.generalisation_recall_id(st)
+        ctx = _base_ctx(request, session, rr_session)
+        ctx.update({
+            "golden_recall_id": golden,
+            "generalisation_recall_id": generalisation_id,
+            "provider": provider_status(st),
+            "b2_configured": st.b2_configured,
+            "commit_sha": _commit_sha(),
+        })
+        return templates.TemplateResponse(request, "submission_evidence.html", ctx)
+
+
 @app.get("/app", response_class=HTMLResponse)
 def command_center(request: Request, rr_session: str | None = Cookie(default=None)) -> HTMLResponse:
     st = get_settings()
