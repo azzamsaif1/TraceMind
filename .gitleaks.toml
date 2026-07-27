@@ -12,7 +12,7 @@ useDefault = true
 [allowlist]
 description = "Known historical credential leaks pending owner rotation + history scrub"
 commits = [
-  "001130e",
-  "ba6e9f8",
-  "2aed6b3",
+  "001130e42f2b489a5170f83059eb9a48ab3a5bef",
+  "ba6e9f8843b6ba746abf4c710310b7334f85ebb8",
+  "2aed6b36cb57e66a13085b2180dc8c5ab04484e3",
 ]
