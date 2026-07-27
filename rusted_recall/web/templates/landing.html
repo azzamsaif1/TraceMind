@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Rusted Recall — Change-impact intelligence for generative media{% endblock %}
+{% block body %}
+<section style="padding: 18px 0 8px;">
+  <h1 style="font-size: 30px; line-height: 1.25; max-width: 760px;">
+    Change one source.<br />
+    Find every affected generative asset.<br />
+    Repair only what must change.
+  </h1>
+  <p class="sub" style="max-width: 760px; font-size: 16px;">
+    Rusted Recall traces changes in product packages, claims, logos, prices, people
+    and licensed media across downstream generated assets, explains every
+    consequence, computes the smallest repair plan, and preserves the entire history.
+  </p>
+  <div class="row" style="gap: 12px; margin: 22px 0 8px;">
+    <a class="btn" style="font-size:15px; padding:12px 22px;" href="/run-live">Run Live Recall</a>
+    <a class="btn secondary" style="font-size:15px; padding:12px 22px;" href="/signup">Start Free</a>
+  </div>
+  <p class="muted" style="font-size:13px;">
+    “Run Live Recall” opens a production-backed demo workspace — no account, no setup, no terminal.
+  </p>
+</section>
+
+<h2>What it proves</h2>
+<div class="grid cards">
+  <div class="card">
+    <strong>ChangeSet</strong>
+    <p class="muted" style="font-size:13px;">Determines what actually changed between two approved source versions — claim, artwork, logo — with the method behind each result.</p>
+  </div>
+  <div class="card">
+    <strong>Change propagation</strong>
+    <p class="muted" style="font-size:13px;">Traverses real dependency edges (explicit, derived, inferred) — not mere visual similarity — to find every affected asset.</p>
+  </div>
+  <div class="card">
+    <strong>Causal explanations</strong>
+    <p class="muted" style="font-size:13px;">Every classification is explainable, with the path and evidence; safe assets explain why the change did not propagate.</p>
+  </div>
+  <div class="card">
+    <strong>Minimal repair</strong>
+    <p class="muted" style="font-size:13px;">Computes a real repair DAG: repair masters once, rebuild deterministic children, and report the generative operations avoided.</p>
+  </div>
+  <div class="card">
+    <strong>Real pipeline</strong>
+    <p class="muted" style="font-size:13px;">Repairs execute through Genblaze → a real provider → validation → Backblaze B2 → provenance manifest → immutable version.</p>
+  </div>
+  <div class="card">
+    <strong>System of record</strong>
+    <p class="muted" style="font-size:13px;">Originals are never overwritten; every repair creates a new immutable, read-back-verified version in B2.</p>
+  </div>
+</div>
+
+<h2>Explore</h2>
+<div class="grid cards">
+  <div class="card">
+    <strong>Golden Production Recall</strong>
+    <p class="muted" style="font-size:13px;">The LumaLeaf campaign: <code>24-Hour Vitality → Daily Botanical Blend</code>.</p>
+    <a class="btn" href="/run-live">Run Live Recall →</a>
+  </div>
+  <div class="card">
+    <strong>Generalisation Test Recall</strong>
+    <p class="muted" style="font-size:13px;">Northstar Coffee — an unrelated campaign with a different topology, proving the same engine generalises.</p>
+    <a class="btn secondary" href="/generalisation">Open generalisation recall →</a>
+  </div>
+  <div class="card">
+    <strong>Submission Evidence</strong>
+    <p class="muted" style="font-size:13px;">Every claim mapped to inspectable evidence, organised by the Backblaze judging criteria.</p>
+    <a class="btn secondary" href="/submission-evidence">View evidence →</a>
+  </div>
+</div>
+{% endblock %}

@@ -18,6 +18,7 @@ from rusted_recall.storage import get_storage
 OLD_CLAIM = "24-Hour Vitality"
 NEW_CLAIM = "Daily Botanical Blend"
 BRAND = "LumaLeaf"
+SLUG = "lumaleaf-botanical"
 
 # Palette per asset so previews are visually distinct but derived from the pack.
 _BASE = (34, 120, 66)
