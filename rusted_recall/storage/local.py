@@ -76,6 +76,26 @@ class LocalStorage(StorageBackend):
     def exists(self, key: str) -> bool:
         return self._path(key).exists()
 
+    # def list_prefix(self, prefix: str) -> list[str]:
+    #     base = self._path(prefix)
+    #     search_root = base if base.is_dir() else base.parent
+    #     results: list[str] = []
+    #     if not search_root.exists():
+    #         return results
+    #     for p in search_root.rglob("*"):
+    #         if p.is_file() and not p.name.endswith(".meta.json"):
+    #             rel = p.relative_to(self._root).as_posix()
+    #             if rel.startswith(prefix):
+    #                 results.append(rel)
+    #     return sorted(results)
+        
+    # def presigned_get_url(self, key: str, expires_in: int = 900) -> str:
+    # raise StorageError(
+    #     "Local development storage cannot create externally accessible URLs. "
+    #     "Use Backblaze B2 for GMI image-to-image repairs."
+    # )
+    # def health_check(self) -> bool:
+    #     return self._root.exists()
     def list_prefix(self, prefix: str) -> list[str]:
         base = self._path(prefix)
         search_root = base if base.is_dir() else base.parent
@@ -88,11 +108,12 @@ class LocalStorage(StorageBackend):
                 if rel.startswith(prefix):
                     results.append(rel)
         return sorted(results)
-        
+
     def presigned_get_url(self, key: str, expires_in: int = 900) -> str:
-    raise StorageError(
-        "Local development storage cannot create externally accessible URLs. "
-        "Use Backblaze B2 for GMI image-to-image repairs."
-    )
+        raise StorageError(
+            "Local development storage cannot create externally accessible URLs. "
+            "Use Backblaze B2 for GMI image-to-image repairs."
+        )
+
     def health_check(self) -> bool:
         return self._root.exists()
