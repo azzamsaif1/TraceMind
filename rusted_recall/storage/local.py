@@ -16,6 +16,7 @@ from rusted_recall.storage.base import (
     ObjectNotFoundError,
     ReadBackVerificationError,
     StorageBackend,
+    StorageError,
     StoredObject,
 )
 
