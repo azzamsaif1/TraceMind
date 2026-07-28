@@ -149,6 +149,23 @@ class B2Storage(StorageBackend):
             for obj in page.get("Contents", []):
                 keys.append(obj["Key"])
         return keys
+    def presigned_get_url(self, key: str, expires_in: int = 900) -> str:
+    if expires_in <= 0:
+        raise ValueError("expires_in must be greater than 0")
+
+    try:
+        return self._client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self._bucket,
+                "Key": key,
+            },
+            ExpiresIn=expires_in,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise StorageError(
+            f"could not create presigned B2 URL for {key}: {exc}"
+        ) from exc
 
     def health_check(self) -> bool:
         try:
