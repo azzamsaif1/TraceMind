@@ -741,16 +741,32 @@ def execute_repair_job(
         new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
 
         refs = [original_bytes]
-        reference_urls = [
-            storage.presigned_get_url(version.b2_key, expires_in=1800)
-        ]
+
+        # Attempt to build presigned URLs only if the storage backend supports it.
+        # LocalStorage will raise, so we catch and continue with only byte references.
+        reference_urls: list[str] = []
+        try:
+            reference_urls.append(
+                storage.presigned_get_url(version.b2_key, expires_in=1800)
+            )
+        except Exception:  # noqa: BLE001
+            # Local or test storage; fall back to only bytes
+            reference_urls = []
 
         for ref_v in (old_v, new_v):
             if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
                 refs.append(storage.get_bytes(ref_v.b2_key))
-                reference_urls.append(
-                    storage.presigned_get_url(ref_v.b2_key, expires_in=1800)
-                )
+
+                if reference_urls:
+                    try:
+                        reference_urls.append(
+                            storage.presigned_get_url(
+                                ref_v.b2_key,
+                                expires_in=1800,
+                            )
+                        )
+                    except Exception:
+                        reference_urls = []
 
         request = GenerationRequest(
             prompt=plan["operation_spec"]["instruction"],
@@ -759,7 +775,11 @@ def execute_repair_job(
             reference_images=refs,
             operation="edit",
             extra={
-                "reference_image_urls": reference_urls,
+                **(
+                    {"reference_image_urls": reference_urls}
+                    if reference_urls
+                    else {}
+                ),
                 "output_format": "png",
                 "watermark": False,
                 "sequential_image_generation": "disabled",
