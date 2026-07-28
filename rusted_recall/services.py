@@ -895,10 +895,18 @@ def approve_and_repair(
     Respects the demo repair cap (directive section 25). Sets the recall status
     through APPROVED -> REPAIRING -> COMPLETED / PARTIALLY_COMPLETED.
     """
+    # if recall.status == recall_fsm.READY_FOR_REVIEW:
+    #     _set_status(session, recall, recall_fsm.APPROVED)
+    # if recall.status == recall_fsm.APPROVED:
+    #     _set_status(session, recall, recall_fsm.REPAIRING)
     if recall.status == recall_fsm.READY_FOR_REVIEW:
-        _set_status(session, recall, recall_fsm.APPROVED)
-    if recall.status == recall_fsm.APPROVED:
-        _set_status(session, recall, recall_fsm.REPAIRING)
+    _set_status(session, recall, recall_fsm.APPROVED)
+
+if recall.status in (
+    recall_fsm.APPROVED,
+    recall_fsm.PARTIALLY_COMPLETED,
+):
+    _set_status(session, recall, recall_fsm.REPAIRING)
 
     impacts = [
         i for i in recall.impacts
