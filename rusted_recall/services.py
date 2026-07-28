@@ -736,21 +736,51 @@ def execute_repair_job(
     session.flush()
 
     with log_context(workspace_id=workspace.id, recall_id=recall.id, asset_id=asset.id, job_id=job.id):
-        original_bytes = storage.get_bytes(version.b2_key)
-        old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
-        new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
-        refs = [original_bytes]
-        for ref_v in (old_v, new_v):
-            if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
-                refs.append(storage.get_bytes(ref_v.b2_key))
+        # original_bytes = storage.get_bytes(version.b2_key)
+        # old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
+        # new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
+        # refs = [original_bytes]
+        # for ref_v in (old_v, new_v):
+        #     if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
+        #         refs.append(storage.get_bytes(ref_v.b2_key))
 
-        request = GenerationRequest(
-            prompt=plan["operation_spec"]["instruction"],
-            width=version.width or 1024,
-            height=version.height or 1024,
-            reference_images=refs,
-            operation="edit",
+        # request = GenerationRequest(
+        #     prompt=plan["operation_spec"]["instruction"],
+        #     width=version.width or 1024,
+        #     height=version.height or 1024,
+        #     reference_images=refs,
+        #     operation="edit",
+        # )
+        original_bytes = storage.get_bytes(version.b2_key)
+old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
+new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
+
+refs = [original_bytes]
+reference_urls = [
+    storage.presigned_get_url(version.b2_key, expires_in=1800)
+]
+
+for ref_v in (old_v, new_v):
+    if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
+        refs.append(storage.get_bytes(ref_v.b2_key))
+        reference_urls.append(
+            storage.presigned_get_url(ref_v.b2_key, expires_in=1800)
         )
+
+request = GenerationRequest(
+    prompt=plan["operation_spec"]["instruction"],
+    width=version.width or 1024,
+    height=version.height or 1024,
+    reference_images=refs,
+    operation="edit",
+    extra={
+        "reference_image_urls": reference_urls,
+        "output_format": "png",
+        "watermark": False,
+        "sequential_image_generation": "disabled",
+        "max_images": 1,
+    },
+)
 
         try:
             execution = pipeline.run(request, job_id=job.id)
