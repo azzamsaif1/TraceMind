@@ -19,6 +19,13 @@ from rusted_recall.storage.base import (
     StoredObject,
 )
 
+from rusted_recall.storage.base import (
+    ObjectNotFoundError,
+    ReadBackVerificationError,
+    StorageBackend,
+    StorageError,
+    StoredObject,
+)
 logger = get_logger(__name__)
 
 
@@ -81,6 +88,11 @@ class LocalStorage(StorageBackend):
                 if rel.startswith(prefix):
                     results.append(rel)
         return sorted(results)
-
+        
+    def presigned_get_url(self, key: str, expires_in: int = 900) -> str:
+    raise StorageError(
+        "Local development storage cannot create externally accessible URLs. "
+        "Use Backblaze B2 for GMI image-to-image repairs."
+    )
     def health_check(self) -> bool:
         return self._root.exists()
