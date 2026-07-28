@@ -739,10 +739,34 @@ def execute_repair_job(
         original_bytes = storage.get_bytes(version.b2_key)
         old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
         new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
+
         refs = [original_bytes]
+
+        # Attempt to build presigned URLs only if the storage backend supports it.
+        # LocalStorage will raise, so we catch and continue with only byte references.
+        reference_urls: list[str] = []
+        try:
+            reference_urls.append(
+                storage.presigned_get_url(version.b2_key, expires_in=1800)
+            )
+        except Exception:  # noqa: BLE001
+            # Local or test storage; fall back to only bytes
+            reference_urls = []
+
         for ref_v in (old_v, new_v):
             if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
                 refs.append(storage.get_bytes(ref_v.b2_key))
+
+                if reference_urls:
+                    try:
+                        reference_urls.append(
+                            storage.presigned_get_url(
+                                ref_v.b2_key,
+                                expires_in=1800,
+                            )
+                        )
+                    except Exception:
+                        reference_urls = []
 
         request = GenerationRequest(
             prompt=plan["operation_spec"]["instruction"],
@@ -750,6 +774,17 @@ def execute_repair_job(
             height=version.height or 1024,
             reference_images=refs,
             operation="edit",
+            extra={
+                **(
+                    {"reference_image_urls": reference_urls}
+                    if reference_urls
+                    else {}
+                ),
+                "output_format": "png",
+                "watermark": False,
+                "sequential_image_generation": "disabled",
+                "max_images": 1,
+            },
         )
 
         try:
@@ -897,50 +932,55 @@ def approve_and_repair(
     """
     if recall.status == recall_fsm.READY_FOR_REVIEW:
         _set_status(session, recall, recall_fsm.APPROVED)
-    if recall.status == recall_fsm.APPROVED:
+
+    if recall.status in (
+        recall_fsm.APPROVED,
+        recall_fsm.PARTIALLY_COMPLETED,
+    ):
         _set_status(session, recall, recall_fsm.REPAIRING)
 
-    impacts = [
-        i for i in recall.impacts
-        if i.classification in ("directly_affected", "probably_affected")
-    ]
-    if asset_ids is not None:
-        impacts = [i for i in impacts if i.asset_id in asset_ids]
-    if max_repairs is not None:
-        impacts = impacts[:max_repairs]
+        impacts = [
+            i for i in recall.impacts
+            if i.classification in ("directly_affected", "probably_affected")
+        ]
+        if asset_ids is not None:
+            impacts = [i for i in impacts if i.asset_id in asset_ids]
+        if max_repairs is not None:
+            impacts = impacts[:max_repairs]
 
-    jobs: list[RepairJob] = []
-    for impact in impacts:
-        asset = session.get(Asset, impact.asset_id)
-        if asset is None:
-            continue
-        version = session.execute(
-            select(AssetVersion)
-            .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
-            .order_by(AssetVersion.version.desc())
-        ).scalars().first()
-        if version is None:
-            continue
-        record_review_decision(
-            session, recall, asset_id=asset.id, decision="approve", reason="auto-approved high confidence"
-        )
-        plan_row = build_and_store_repair_plan(
-            session, storage, workspace, recall, asset, version, provider_name, model
-        )
-        job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
-        jobs.append(job)
-        session.flush()
+        jobs: list[RepairJob] = []
+        for impact in impacts:
+            asset = session.get(Asset, impact.asset_id)
+            if asset is None:
+                continue
+            version = session.execute(
+                select(AssetVersion)
+                .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
+                .order_by(AssetVersion.version.desc())
+            ).scalars().first()
+            if version is None:
+                continue
+            record_review_decision(
+                session, recall, asset_id=asset.id, decision="approve", reason="auto-approved high confidence"
+            )
+            plan_row = build_and_store_repair_plan(
+                session, storage, workspace, recall, asset, version, provider_name, model
+            )
+            job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
+            jobs.append(job)
+            session.flush()
 
-    succeeded = [j for j in jobs if j.status == "completed"]
-    failed = [j for j in jobs if j.status == "failed"]
-    if jobs and not failed:
-        _set_status(session, recall, recall_fsm.COMPLETED)
-    elif succeeded:
-        _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
-    elif failed:
-        # nothing succeeded; keep repairing state recoverable
-        _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
-    return jobs
+        succeeded = [j for j in jobs if j.status == "completed"]
+        failed = [j for j in jobs if j.status == "failed"]
+        if jobs and not failed:
+            _set_status(session, recall, recall_fsm.COMPLETED)
+        elif succeeded:
+            _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
+        elif failed:
+            # nothing succeeded; keep repairing state recoverable
+            _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
+        return jobs
+    return []
 
 
 def build_report(session: Session, workspace: Workspace, recall: RecallEvent, *, elapsed_seconds: float = 0.0):
