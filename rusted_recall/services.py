@@ -736,51 +736,36 @@ def execute_repair_job(
     session.flush()
 
     with log_context(workspace_id=workspace.id, recall_id=recall.id, asset_id=asset.id, job_id=job.id):
-        # original_bytes = storage.get_bytes(version.b2_key)
-        # old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
-        # new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
-        # refs = [original_bytes]
-        # for ref_v in (old_v, new_v):
-        #     if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
-        #         refs.append(storage.get_bytes(ref_v.b2_key))
-
-        # request = GenerationRequest(
-        #     prompt=plan["operation_spec"]["instruction"],
-        #     width=version.width or 1024,
-        #     height=version.height or 1024,
-        #     reference_images=refs,
-        #     operation="edit",
-        # )
         original_bytes = storage.get_bytes(version.b2_key)
         old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
         new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
 
         refs = [original_bytes]
         reference_urls = [
-          storage.presigned_get_url(version.b2_key, expires_in=1800)
+            storage.presigned_get_url(version.b2_key, expires_in=1800)
         ]
 
-      for ref_v in (old_v, new_v):
-         if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
-           refs.append(storage.get_bytes(ref_v.b2_key))
-           reference_urls.append(
-            storage.presigned_get_url(ref_v.b2_key, expires_in=1800)
-            )
+        for ref_v in (old_v, new_v):
+            if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
+                refs.append(storage.get_bytes(ref_v.b2_key))
+                reference_urls.append(
+                    storage.presigned_get_url(ref_v.b2_key, expires_in=1800)
+                )
 
-       request = GenerationRequest(
-       prompt=plan["operation_spec"]["instruction"],
-       width=version.width or 1024,
-       height=version.height or 1024,
-      reference_images=refs,
-      operation="edit",
-      extra={
-        "reference_image_urls": reference_urls,
-        "output_format": "png",
-        "watermark": False,
-        "sequential_image_generation": "disabled",
-        "max_images": 1,
-         },
-         )
+        request = GenerationRequest(
+            prompt=plan["operation_spec"]["instruction"],
+            width=version.width or 1024,
+            height=version.height or 1024,
+            reference_images=refs,
+            operation="edit",
+            extra={
+                "reference_image_urls": reference_urls,
+                "output_format": "png",
+                "watermark": False,
+                "sequential_image_generation": "disabled",
+                "max_images": 1,
+            },
+        )
 
         try:
             execution = pipeline.run(request, job_id=job.id)
@@ -925,60 +910,57 @@ def approve_and_repair(
     Respects the demo repair cap (directive section 25). Sets the recall status
     through APPROVED -> REPAIRING -> COMPLETED / PARTIALLY_COMPLETED.
     """
-    # if recall.status == recall_fsm.READY_FOR_REVIEW:
-    #     _set_status(session, recall, recall_fsm.APPROVED)
-    # if recall.status == recall_fsm.APPROVED:
-    #     _set_status(session, recall, recall_fsm.REPAIRING)
     if recall.status == recall_fsm.READY_FOR_REVIEW:
-    _set_status(session, recall, recall_fsm.APPROVED)
+        _set_status(session, recall, recall_fsm.APPROVED)
 
-if recall.status in (
-    recall_fsm.APPROVED,
-    recall_fsm.PARTIALLY_COMPLETED,
-):
-    _set_status(session, recall, recall_fsm.REPAIRING)
+    if recall.status in (
+        recall_fsm.APPROVED,
+        recall_fsm.PARTIALLY_COMPLETED,
+    ):
+        _set_status(session, recall, recall_fsm.REPAIRING)
 
-    impacts = [
-        i for i in recall.impacts
-        if i.classification in ("directly_affected", "probably_affected")
-    ]
-    if asset_ids is not None:
-        impacts = [i for i in impacts if i.asset_id in asset_ids]
-    if max_repairs is not None:
-        impacts = impacts[:max_repairs]
+        impacts = [
+            i for i in recall.impacts
+            if i.classification in ("directly_affected", "probably_affected")
+        ]
+        if asset_ids is not None:
+            impacts = [i for i in impacts if i.asset_id in asset_ids]
+        if max_repairs is not None:
+            impacts = impacts[:max_repairs]
 
-    jobs: list[RepairJob] = []
-    for impact in impacts:
-        asset = session.get(Asset, impact.asset_id)
-        if asset is None:
-            continue
-        version = session.execute(
-            select(AssetVersion)
-            .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
-            .order_by(AssetVersion.version.desc())
-        ).scalars().first()
-        if version is None:
-            continue
-        record_review_decision(
-            session, recall, asset_id=asset.id, decision="approve", reason="auto-approved high confidence"
-        )
-        plan_row = build_and_store_repair_plan(
-            session, storage, workspace, recall, asset, version, provider_name, model
-        )
-        job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
-        jobs.append(job)
-        session.flush()
+        jobs: list[RepairJob] = []
+        for impact in impacts:
+            asset = session.get(Asset, impact.asset_id)
+            if asset is None:
+                continue
+            version = session.execute(
+                select(AssetVersion)
+                .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
+                .order_by(AssetVersion.version.desc())
+            ).scalars().first()
+            if version is None:
+                continue
+            record_review_decision(
+                session, recall, asset_id=asset.id, decision="approve", reason="auto-approved high confidence"
+            )
+            plan_row = build_and_store_repair_plan(
+                session, storage, workspace, recall, asset, version, provider_name, model
+            )
+            job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
+            jobs.append(job)
+            session.flush()
 
-    succeeded = [j for j in jobs if j.status == "completed"]
-    failed = [j for j in jobs if j.status == "failed"]
-    if jobs and not failed:
-        _set_status(session, recall, recall_fsm.COMPLETED)
-    elif succeeded:
-        _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
-    elif failed:
-        # nothing succeeded; keep repairing state recoverable
-        _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
-    return jobs
+        succeeded = [j for j in jobs if j.status == "completed"]
+        failed = [j for j in jobs if j.status == "failed"]
+        if jobs and not failed:
+            _set_status(session, recall, recall_fsm.COMPLETED)
+        elif succeeded:
+            _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
+        elif failed:
+            # nothing succeeded; keep repairing state recoverable
+            _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
+        return jobs
+    return []
 
 
 def build_report(session: Session, workspace: Workspace, recall: RecallEvent, *, elapsed_seconds: float = 0.0):
