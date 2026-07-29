@@ -757,6 +757,7 @@ def execute_repair_job(
         original_bytes = storage.get_bytes(version.b2_key)
         old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
         new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
+
         refs = [original_bytes]
         ref_keys = [version.b2_key]
         for ref_v in (old_v, new_v):
@@ -775,6 +776,17 @@ def execute_repair_job(
                     reference_urls.append(storage.create_presigned_get_url(rk, expiry))
                 except Exception as exc:  # noqa: BLE001 - URL is best-effort
                     logger.warning("presign failed", extra={"b2_key": rk, "error": str(exc)})
+
+                if reference_urls:
+                    try:
+                        reference_urls.append(
+                            storage.presigned_get_url(
+                                ref_v.b2_key,
+                                expires_in=1800,
+                            )
+                        )
+                    except Exception:
+                        reference_urls = []
 
         request = GenerationRequest(
             prompt=plan["operation_spec"]["instruction"],

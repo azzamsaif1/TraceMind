@@ -48,11 +48,9 @@ class GMICloudProvider:
     def configured(self) -> bool:
         return self._settings.gmicloud_configured
 
-    def _client(self):  # type: ignore[no-untyped-def]
-        import httpx
-
+    def _client(self) -> httpx.Client:
         return httpx.Client(
-            base_url=self._settings.gmicloud_base_url,
+            base_url=self._settings.gmicloud_base_url.rstrip("/"),
             headers={
                 "Authorization": f"Bearer {self._settings.gmicloud_api_key}",
                 "Content-Type": "application/json",
@@ -63,10 +61,41 @@ class GMICloudProvider:
     def generate(self, request: GenerationRequest) -> GenerationResult:
         if not self.configured:
             raise ProviderConfigError(
-                "GMI Cloud API key is not configured. The generation operation is "
-                "disabled. Set GMICLOUD_API_KEY to enable real repairs."
+                "GMI Cloud API key is not configured. "
+                "Set GMICLOUD_API_KEY to enable real repairs."
             )
-        import httpx
+
+        inner_payload: dict[str, Any] = {
+            "prompt": request.prompt,
+            "size": "2K",
+            "output_format": "png",
+            "watermark": False,
+            "sequential_image_generation": "disabled",
+            "max_images": 1,
+        }
+
+        # GMI Seedream expects image URLs, not raw base64 image bytes.
+        reference_urls = request.extra.get("reference_image_urls")
+        if reference_urls:
+            if isinstance(reference_urls, str):
+                inner_payload["image"] = reference_urls
+            else:
+                inner_payload["image"] = (
+                    reference_urls[0]
+                    if len(reference_urls) == 1
+                    else reference_urls
+                )
+
+        # Allow supported caller overrides without overwriting transport metadata.
+        for key in (
+            "size",
+            "output_format",
+            "watermark",
+            "sequential_image_generation",
+            "max_images",
+        ):
+            if key in request.extra:
+                inner_payload[key] = request.extra[key]
 
         payload: dict[str, Any] = {
             "prompt": request.prompt,
