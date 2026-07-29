@@ -9,13 +9,20 @@ from __future__ import annotations
 from rusted_recall.config import Settings, get_settings
 from rusted_recall.providers.base import ImageProvider, ProviderConfigError
 from rusted_recall.providers.genblaze import GenblazePipeline
+from rusted_recall.providers.genblaze_official import (
+    OfficialGenblazeImageProvider,
+    sdk_available,
+)
 from rusted_recall.providers.gmicloud import GMICloudProvider
 
 
 def build_primary_provider(settings: Settings | None = None) -> ImageProvider:
     settings = settings or get_settings()
-    # GMI Cloud is the referenced real provider. Additional providers can be
-    # registered here and selected via ProviderConfiguration.
+    # When Genblaze is enabled and the pinned upstream SDK is installed, run the
+    # real Genblaze runtime. Otherwise use the direct GMI request-queue adapter
+    # (same contract). Neither ever fabricates output.
+    if settings.genblaze_enabled and sdk_available():
+        return OfficialGenblazeImageProvider(settings)
     return GMICloudProvider(settings)
 
 
@@ -27,6 +34,8 @@ def provider_status(settings: Settings | None = None) -> dict:
         "model": provider.model,
         "configured": provider.configured,
         "genblaze_enabled": settings.genblaze_enabled,
+        "genblaze_official_sdk": sdk_available(),
+        "using_official_genblaze": settings.genblaze_enabled and sdk_available(),
     }
 
 

@@ -112,6 +112,17 @@ def readyz() -> JSONResponse:
     return JSONResponse({"ready": ready, "checks": checks}, status_code=200 if ready else 503)
 
 
+def _genblaze_versions() -> dict[str, str] | None:
+    from rusted_recall.providers.genblaze_official import dist_version, sdk_available
+
+    if not sdk_available():
+        return None
+    return {
+        "core": dist_version("genblaze-core"),
+        "connector": dist_version("genblaze-gmicloud"),
+    }
+
+
 def _commit_sha() -> str:
     return (
         os.environ.get("RR_COMMIT_SHA")
@@ -190,6 +201,7 @@ def diagnostics(request: Request) -> HTMLResponse:
         "latest_object": obj_ctx,
         "provider_verified": provider_verified,
         "last_provider_error": last_provider_error,
+        "genblaze_versions": _genblaze_versions(),
         "weights": EVIDENCE_WEIGHTS,
         "thresholds": IMPACT_THRESHOLDS,
     }
