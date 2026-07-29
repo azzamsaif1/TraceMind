@@ -149,16 +149,25 @@ class GenblazePipeline:
                 )
             self._end(invoke, "completed", f"provider={provider_used}")
 
+            # Real upstream Genblaze runs stamp provenance into the result; the
+            # manifest reflects exactly which path executed (nothing is faked).
+            gb = result.raw_metadata.get("genblaze", {})
+            official = bool(gb.get("official"))
+            pipeline_id = self.pipeline_id
+            if official and gb.get("core_version"):
+                pipeline_id = f"genblaze-core/{gb['core_version']}"
+                logs.append(f"official genblaze core={gb.get('core_version')} connector={gb.get('connector_version')}")
+
             persist = self._stage(stages, "output_ready")
             self._end(persist, "completed", f"{len(result.image_bytes)} bytes")
 
             return PipelineExecution(
-                pipeline_id=self.pipeline_id,
+                pipeline_id=pipeline_id,
                 result=result,
                 stages=stages,
                 provider_used=provider_used,
                 attempts=attempts,
-                used_official_genblaze=False,
+                used_official_genblaze=official,
                 logs=logs,
             )
 

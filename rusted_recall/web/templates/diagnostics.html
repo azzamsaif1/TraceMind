@@ -24,6 +24,7 @@
   {% if last_provider_error %}<tr><td>Last provider error</td><td class="mono">{{ last_provider_error.category }} — {{ last_provider_error.detail }} ({{ last_provider_error.at }})</td></tr>{% endif %}
   <tr><td>Provider model</td><td class="mono">{{ provider.model }}</td></tr>
   <tr><td>Genblaze pipeline</td><td>{{ 'enabled' if provider.genblaze_enabled else 'disabled' }}</td></tr>
+  <tr><td>Genblaze runtime</td><td><span class="pill {{ 'completed' if provider.using_official_genblaze else 'draft' }}">{{ 'official upstream SDK' if provider.using_official_genblaze else ('SDK installed, disabled' if provider.genblaze_official_sdk else 'local orchestration (SDK absent)') }}</span>{% if genblaze_versions %} <span class="mono">genblaze-core {{ genblaze_versions.core }} / gmicloud {{ genblaze_versions.connector }}</span>{% endif %}</td></tr>
   <tr><td>OCR (tesseract)</td><td>{{ 'available' if ocr_available else 'unavailable (declared text used)' }}</td></tr>
   <tr><td>Demo repair cap</td><td>{{ settings.demo_max_repairs_per_recall }} per recall</td></tr>
 </table>
