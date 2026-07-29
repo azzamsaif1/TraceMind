@@ -13,9 +13,16 @@ from rusted_recall.providers.base import GenerationRequest
 from rusted_recall.providers.factory import build_primary_provider
 from rusted_recall.providers.genblaze_official import (
     OfficialGenblazeImageProvider,
+    _classify,
     sdk_available,
 )
 from rusted_recall.providers.gmicloud import GMICloudProvider
+from rusted_recall.repair import (
+    ERR_INVALID,
+    ERR_QUOTA,
+    ERR_UNAVAILABLE,
+    is_retryable,
+)
 
 pytestmark = pytest.mark.skipif(not sdk_available(), reason="genblaze SDK not installed")
 
@@ -85,6 +92,22 @@ def test_official_generate_maps_step_and_provenance(monkeypatch):
     assert gb["request_id"] == "req-123"
     assert gb["core_version"] != "unknown"
     assert gb["connector_version"] != "unknown"
+
+
+def test_classify_trusts_concrete_codes_over_message():
+    # A genuine 5xx server_error stays retryable even if its message text
+    # contains words like "invalid"/"not found" (regression guard).
+    cat = _classify("server_error", "Upstream 503: invalid gateway, service not found")
+    assert cat == ERR_UNAVAILABLE
+    assert is_retryable(cat)
+    # A concrete invalid_input code is permanent.
+    assert _classify("invalid_input", "bad prompt") == ERR_INVALID
+
+
+def test_classify_recovers_category_from_flattened_unknown():
+    # 402 is flattened to "unknown" by the connector; recover quota from text.
+    assert _classify("unknown", "GMICloud submit failed (402): Insufficient credits") == ERR_QUOTA
+    assert _classify("", "request timed out after 180s") != ERR_QUOTA
 
 
 def test_official_no_reference_is_generate(monkeypatch):
