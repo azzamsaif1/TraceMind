@@ -130,6 +130,21 @@ class B2Storage(StorageBackend):
         )
         return resp["Body"].read()
 
+    def create_presigned_get_url(self, key: str, expires_seconds: int = 900) -> str:
+        """Short-lived signed GET URL so an external provider (e.g. GMI Seedream)
+        can read a private original without the bucket being public. Never store
+        or display these URLs; they are handed to the provider transiently."""
+        if not self.exists(key):
+            raise ObjectNotFoundError(key)
+        return self._with_retry(
+            "presign_get",
+            lambda: self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self._bucket, "Key": key},
+                ExpiresIn=int(expires_seconds),
+            ),
+        )
+
     def exists(self, key: str) -> bool:
         from botocore.exceptions import ClientError
 

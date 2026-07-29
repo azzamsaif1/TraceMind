@@ -67,6 +67,15 @@ class LocalStorage(StorageBackend):
             raise ObjectNotFoundError(key)
         return path.read_bytes()
 
+    def create_presigned_get_url(self, key: str, expires_seconds: int = 900) -> str:
+        """Local dev backend has no externally reachable URL. Return a file URI
+        so callers can detect the non-remote case; external providers cannot use
+        this (development storage is never a production system of record)."""
+        path = self._path(key)
+        if not path.exists():
+            raise ObjectNotFoundError(key)
+        return path.as_uri()
+
     def exists(self, key: str) -> bool:
         return self._path(key).exists()
 

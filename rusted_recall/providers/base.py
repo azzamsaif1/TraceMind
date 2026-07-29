@@ -68,7 +68,8 @@ def classify_http_error(status_code: int) -> str:
         return ERR_RATE_LIMIT
     if status_code == 402:
         return ERR_QUOTA
-    if status_code == 400 or status_code == 422:
+    if status_code in (400, 404, 422):
+        # 404 = wrong endpoint / unknown model / unknown request id — permanent.
         return ERR_INVALID
     if status_code == 451:
         return ERR_SAFETY
