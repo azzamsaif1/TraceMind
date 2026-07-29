@@ -162,6 +162,19 @@ def diagnostics(request: Request) -> HTMLResponse:
                 "created_at": latest_object.created_at,
                 "verified": bool(latest_object.sha256),
             }
+        # "Configured" (key present) is distinct from "verified working" (a real
+        # generation actually succeeded). Never show green just for a key.
+        provider_verified = latest_run is not None and latest_run.provider == "gmicloud"
+        last_failed = s.execute(
+            select(RepairJob).where(RepairJob.status == "failed").order_by(RepairJob.created_at.desc())
+        ).scalars().first()
+        last_provider_error = None
+        if last_failed is not None:
+            last_provider_error = {
+                "category": last_failed.error_category or "unknown",
+                "detail": (last_failed.error_detail or "")[:200],
+                "at": last_failed.created_at,
+            }
     ctx = {
         "request": request,
         "settings": st,
@@ -175,6 +188,8 @@ def diagnostics(request: Request) -> HTMLResponse:
         "worker_health": type(runner).__name__,
         "latest_run": run_ctx,
         "latest_object": obj_ctx,
+        "provider_verified": provider_verified,
+        "last_provider_error": last_provider_error,
         "weights": EVIDENCE_WEIGHTS,
         "thresholds": IMPACT_THRESHOLDS,
     }

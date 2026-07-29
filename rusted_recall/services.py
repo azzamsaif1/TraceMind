@@ -15,6 +15,7 @@ from rusted_recall import evidence as ev
 from rusted_recall import recall as recall_fsm
 from rusted_recall import usage as usage_metering
 from rusted_recall.changeset import ChangeSet, propose_changeset
+from rusted_recall.config import get_settings
 from rusted_recall.evidence import ALGO_VERSION, Evidence
 from rusted_recall.graph import DependencyGraph
 from rusted_recall.hashing import perceptual_hash_bytes, sha256_bytes
@@ -58,6 +59,7 @@ from rusted_recall.repair import (
     DEFAULT_RETRY_POLICY,
     RepairPlan,
     build_repair_instruction,
+    is_retryable,
 )
 from rusted_recall.storage.base import ObjectKeys, StorageBackend
 from rusted_recall.validation import validate_repaired_image
@@ -447,6 +449,14 @@ def _set_status(session: Session, recall: RecallEvent, target: str) -> None:
     audit(session, recall.workspace_id, "recall.status", {"status": target}, recall_event_id=recall.id)
 
 
+def _latest_job_for_asset(session: Session, recall_id: str, asset_id: str) -> RepairJob | None:
+    return session.execute(
+        select(RepairJob)
+        .where(RepairJob.recall_event_id == recall_id, RepairJob.asset_id == asset_id)
+        .order_by(RepairJob.created_at.desc())
+    ).scalars().first()
+
+
 def _build_graph(session: Session, workspace_id: str) -> DependencyGraph:
     g = DependencyGraph()
     edges = session.execute(
@@ -680,6 +690,14 @@ def build_and_store_repair_plan(
         retry_policy=DEFAULT_RETRY_POLICY,
         output_b2_key=keys.repaired_output(asset.id, new_version_id, "repaired.png"),
     )
+    # Idempotency: an identical plan (same recall+version+provider+model+op) must
+    # not create a duplicate plan row on repeated clicks.
+    existing_plan = session.execute(
+        select(RepairPlanRow).where(RepairPlanRow.idempotency_key == plan.idempotency_key)
+    ).scalar_one_or_none()
+    if existing_plan is not None:
+        return existing_plan
+
     row = RepairPlanRow(
         recall_event_id=recall.id,
         asset_id=asset.id,
@@ -740,9 +758,23 @@ def execute_repair_job(
         old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
         new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
         refs = [original_bytes]
+        ref_keys = [version.b2_key]
         for ref_v in (old_v, new_v):
             if ref_v and ref_v.b2_key and storage.exists(ref_v.b2_key):
                 refs.append(storage.get_bytes(ref_v.b2_key))
+                ref_keys.append(ref_v.b2_key)
+
+        # Providers that fetch by URL (e.g. GMI Seedream) need short-lived signed
+        # URLs to the private originals; the bucket is never made public. Only
+        # produced for a remote system-of-record backend.
+        reference_urls: list[str] = []
+        if getattr(storage, "is_system_of_record", False):
+            expiry = get_settings().reference_url_expiry_seconds
+            for rk in ref_keys:
+                try:
+                    reference_urls.append(storage.create_presigned_get_url(rk, expiry))
+                except Exception as exc:  # noqa: BLE001 - URL is best-effort
+                    logger.warning("presign failed", extra={"b2_key": rk, "error": str(exc)})
 
         request = GenerationRequest(
             prompt=plan["operation_spec"]["instruction"],
@@ -750,6 +782,7 @@ def execute_repair_job(
             height=version.height or 1024,
             reference_images=refs,
             operation="edit",
+            extra={"reference_urls": reference_urls} if reference_urls else {},
         )
 
         try:
@@ -895,9 +928,20 @@ def approve_and_repair(
     Respects the demo repair cap (directive section 25). Sets the recall status
     through APPROVED -> REPAIRING -> COMPLETED / PARTIALLY_COMPLETED.
     """
+    # Idempotent no-op on a terminal recall (repeated clicks after completion).
+    if recall_fsm.is_terminal(recall.status):
+        return list(
+            session.execute(
+                select(RepairJob).where(RepairJob.recall_event_id == recall.id)
+            ).scalars().all()
+        )
+
+    # A retry arrives with the recall in PARTIALLY_COMPLETED; it must transition
+    # back through REPAIRING before the final state is re-derived, otherwise the
+    # terminal derivation attempts an illegal partially_completed->partially_completed.
     if recall.status == recall_fsm.READY_FOR_REVIEW:
         _set_status(session, recall, recall_fsm.APPROVED)
-    if recall.status == recall_fsm.APPROVED:
+    if recall.status in (recall_fsm.APPROVED, recall_fsm.PARTIALLY_COMPLETED):
         _set_status(session, recall, recall_fsm.REPAIRING)
 
     impacts = [
@@ -914,6 +958,15 @@ def approve_and_repair(
         asset = session.get(Asset, impact.asset_id)
         if asset is None:
             continue
+        # Retry-failed-only + idempotency: preserve already-succeeded and
+        # review-pending work; only (re)run assets with no job yet or whose last
+        # job is a retryable failure.
+        last = _latest_job_for_asset(session, recall.id, asset.id)
+        if last is not None:
+            if last.status in ("completed", "requires_review"):
+                continue
+            if last.status == "failed" and not is_retryable(last.error_category or ""):
+                continue
         version = session.execute(
             select(AssetVersion)
             .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
@@ -931,15 +984,24 @@ def approve_and_repair(
         jobs.append(job)
         session.flush()
 
-    succeeded = [j for j in jobs if j.status == "completed"]
-    failed = [j for j in jobs if j.status == "failed"]
-    if jobs and not failed:
-        _set_status(session, recall, recall_fsm.COMPLETED)
-    elif succeeded:
-        _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
-    elif failed:
-        # nothing succeeded; keep repairing state recoverable
-        _set_status(session, recall, recall_fsm.PARTIALLY_COMPLETED)
+    # Final state is derived per asset. A completed repair produces an immutable
+    # version, so success is sticky and order-independent: an asset is done once
+    # any of its jobs completed. Remaining failures / review keep the recall
+    # partially_completed (legitimate unfinished work).
+    all_jobs = session.execute(
+        select(RepairJob).where(RepairJob.recall_event_id == recall.id)
+    ).scalars().all()
+    statuses_by_asset: dict[str, set[str]] = {}
+    for j in all_jobs:
+        statuses_by_asset.setdefault(j.asset_id, set()).add(j.status)
+    if not statuses_by_asset:
+        final = recall_fsm.COMPLETED  # nothing repairable — consistent
+    elif all("completed" in s for s in statuses_by_asset.values()):
+        final = recall_fsm.COMPLETED
+    else:
+        final = recall_fsm.PARTIALLY_COMPLETED
+    if recall.status != final:
+        _set_status(session, recall, final)
     return jobs
 
 

@@ -29,10 +29,15 @@ class Settings(BaseSettings):
     b2_s3_endpoint: str | None = None
     b2_region: str = "us-west-004"
 
-    # --- GMI Cloud image provider ---
+    # --- GMI Cloud image provider (Inference Engine request queue) ---
     gmicloud_api_key: str | None = None
-    gmicloud_base_url: str = "https://api.gmi-serving.com"
-    gmicloud_model: str = "gmi/seedream-3.0"
+    gmicloud_base_url: str = "https://console.gmicloud.ai"
+    gmicloud_model: str = "seedream-5.0-pro"
+    # Bounded polling for the async request queue.
+    gmicloud_poll_interval_seconds: float = 3.0
+    gmicloud_poll_timeout_seconds: float = 180.0
+    # Presigned reference-image URL lifetime handed to the provider.
+    reference_url_expiry_seconds: int = 900
 
     # --- Genblaze ---
     genblaze_enabled: bool = False
