@@ -55,10 +55,14 @@ _ERROR_CODE_MAP = {
 def _classify(error_code_value: str, message: str) -> str:
     """Map an upstream error to our taxonomy. The connector flattens some HTTP
     statuses (e.g. 402 insufficient credits) to ``unknown`` — recover the real
-    category from the message so retry/quota handling stays correct."""
-    mapped = _ERROR_CODE_MAP.get(error_code_value, ERR_UNAVAILABLE)
-    if mapped != ERR_UNAVAILABLE:
-        return mapped
+    category from the message so retry/quota handling stays correct.
+
+    Message reparse is applied ONLY when the upstream code is missing/``unknown``.
+    A concrete code (including a genuine ``server_error``, which is retryable)
+    is trusted as-is, so a transient 5xx whose message happens to contain words
+    like "invalid" or "not found" is not wrongly demoted to a permanent error."""
+    if error_code_value and error_code_value != "unknown":
+        return _ERROR_CODE_MAP.get(error_code_value, ERR_UNAVAILABLE)
     low = message.lower()
     if "402" in low or "insufficient credit" in low or "quota" in low:
         return ERR_QUOTA
