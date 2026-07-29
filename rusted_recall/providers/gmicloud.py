@@ -19,6 +19,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import httpx
+
 from rusted_recall.config import Settings, get_settings
 from rusted_recall.logging_setup import get_logger
 from rusted_recall.providers.base import (
@@ -64,38 +66,6 @@ class GMICloudProvider:
                 "GMI Cloud API key is not configured. "
                 "Set GMICLOUD_API_KEY to enable real repairs."
             )
-
-        inner_payload: dict[str, Any] = {
-            "prompt": request.prompt,
-            "size": "2K",
-            "output_format": "png",
-            "watermark": False,
-            "sequential_image_generation": "disabled",
-            "max_images": 1,
-        }
-
-        # GMI Seedream expects image URLs, not raw base64 image bytes.
-        reference_urls = request.extra.get("reference_image_urls")
-        if reference_urls:
-            if isinstance(reference_urls, str):
-                inner_payload["image"] = reference_urls
-            else:
-                inner_payload["image"] = (
-                    reference_urls[0]
-                    if len(reference_urls) == 1
-                    else reference_urls
-                )
-
-        # Allow supported caller overrides without overwriting transport metadata.
-        for key in (
-            "size",
-            "output_format",
-            "watermark",
-            "sequential_image_generation",
-            "max_images",
-        ):
-            if key in request.extra:
-                inner_payload[key] = request.extra[key]
 
         payload: dict[str, Any] = {
             "prompt": request.prompt,
@@ -205,8 +175,6 @@ class GMICloudProvider:
 
     @staticmethod
     def _download(url: str) -> bytes:
-        import httpx
-
         r = httpx.get(url, timeout=60.0)
         if r.status_code >= 400:
             raise ProviderError(

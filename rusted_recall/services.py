@@ -769,24 +769,13 @@ def execute_repair_job(
         # URLs to the private originals; the bucket is never made public. Only
         # produced for a remote system-of-record backend.
         reference_urls: list[str] = []
-        if getattr(storage, "is_system_of_record", False):
+        if storage.is_system_of_record:
             expiry = get_settings().reference_url_expiry_seconds
             for rk in ref_keys:
                 try:
                     reference_urls.append(storage.create_presigned_get_url(rk, expiry))
                 except Exception as exc:  # noqa: BLE001 - URL is best-effort
                     logger.warning("presign failed", extra={"b2_key": rk, "error": str(exc)})
-
-                if reference_urls:
-                    try:
-                        reference_urls.append(
-                            storage.presigned_get_url(
-                                ref_v.b2_key,
-                                expires_in=1800,
-                            )
-                        )
-                    except Exception:
-                        reference_urls = []
 
         request = GenerationRequest(
             prompt=plan["operation_spec"]["instruction"],
