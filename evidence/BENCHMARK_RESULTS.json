@@ -1,0 +1,111 @@
+{
+  "generated_at": "2026-07-30T08:10:25Z",
+  "note": "All numbers computed from real engine output; none hardcoded.",
+  "scenarios": {
+    "lumaleaf": {
+      "total_assets": 6,
+      "analysed": 6,
+      "affected": 1,
+      "needs_review": 1,
+      "safe": 4,
+      "baselines": {
+        "A_regenerate_all_affected": {
+          "generative_operations": 1
+        },
+        "B_repair_each_affected": {
+          "generative_operations": 1
+        },
+        "C_manual_no_propagation": {
+          "assets_requiring_manual_triage": 6
+        }
+      },
+      "rusted": {
+        "generative_operations": 0,
+        "deterministic_rebuilds": 1,
+        "manual_reviews": 1,
+        "total_repair_operations": 1
+      },
+      "generative_operations_avoided": 1
+    },
+    "northstar": {
+      "total_assets": 6,
+      "analysed": 6,
+      "affected": 1,
+      "needs_review": 4,
+      "safe": 1,
+      "baselines": {
+        "A_regenerate_all_affected": {
+          "generative_operations": 1
+        },
+        "B_repair_each_affected": {
+          "generative_operations": 1
+        },
+        "C_manual_no_propagation": {
+          "assets_requiring_manual_triage": 6
+        }
+      },
+      "rusted": {
+        "generative_operations": 1,
+        "deterministic_rebuilds": 0,
+        "manual_reviews": 4,
+        "total_repair_operations": 1
+      },
+      "generative_operations_avoided": 0
+    },
+    "blind_generic_company": {
+      "total_assets": 4,
+      "analysed": 4,
+      "affected": 2,
+      "needs_review": 1,
+      "safe": 1,
+      "baselines": {
+        "A_regenerate_all_affected": {
+          "generative_operations": 2
+        },
+        "B_repair_each_affected": {
+          "generative_operations": 2
+        },
+        "C_manual_no_propagation": {
+          "assets_requiring_manual_triage": 4
+        }
+      },
+      "rusted": {
+        "generative_operations": 0,
+        "deterministic_rebuilds": 2,
+        "manual_reviews": 1,
+        "total_repair_operations": 2
+      },
+      "generative_operations_avoided": 2
+    }
+  },
+  "scale_test": [
+    {
+      "assets": 10,
+      "planning_seconds": 3e-05,
+      "generative_operations": 2,
+      "deterministic_rebuilds": 8,
+      "operations_avoided": 8
+    },
+    {
+      "assets": 100,
+      "planning_seconds": 0.00017,
+      "generative_operations": 20,
+      "deterministic_rebuilds": 80,
+      "operations_avoided": 80
+    },
+    {
+      "assets": 1000,
+      "planning_seconds": 0.00197,
+      "generative_operations": 200,
+      "deterministic_rebuilds": 800,
+      "operations_avoided": 800
+    },
+    {
+      "assets": 10000,
+      "planning_seconds": 0.05879,
+      "generative_operations": 2000,
+      "deterministic_rebuilds": 8000,
+      "operations_avoided": 8000
+    }
+  ]
+}

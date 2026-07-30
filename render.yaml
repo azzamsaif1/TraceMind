@@ -1,0 +1,71 @@
+# Render Blueprint — production topology for Rusted Recall.
+#
+#   WEB  --enqueue-->  Postgres (repair_queue_items)  --claim-->  WORKER
+#
+# The web and worker are SEPARATE services that share the same Docker image and
+# the same managed Postgres. The web service only enqueues durable repair tasks
+# (RUN_INLINE_WORKER=false); the dedicated worker process drains them. Both use
+# the identical claim/idempotency logic in rusted_recall/worker.py.
+#
+# Apply with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# (The single-service deployment also works: leave RUN_INLINE_WORKER=true and the
+# web dyno drains its own durable queue on a background thread.)
+services:
+  - type: web
+    name: rusted-recall
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: sh -c "alembic upgrade head && uvicorn rusted_recall.web.app:app --host 0.0.0.0 --port 8000"
+    healthCheckPath: /readyz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: RUN_INLINE_WORKER
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rusted-recall-db
+          property: connectionString
+      - key: GENBLAZE_ENABLED
+        sync: false
+      - key: GMICLOUD_API_KEY
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APP_KEY
+        sync: false
+      - key: B2_BUCKET_NAME
+        sync: false
+      - key: B2_S3_ENDPOINT
+        sync: false
+
+  - type: worker
+    name: rusted-recall-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # The worker does NOT run migrations (the web service owns schema) — it just
+    # claims and executes durable repair tasks.
+    dockerCommand: python -m rusted_recall.worker
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rusted-recall-db
+          property: connectionString
+      - key: GENBLAZE_ENABLED
+        sync: false
+      - key: GMICLOUD_API_KEY
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APP_KEY
+        sync: false
+      - key: B2_BUCKET_NAME
+        sync: false
+      - key: B2_S3_ENDPOINT
+        sync: false
+
+databases:
+  - name: rusted-recall-db
+    plan: basic-256mb

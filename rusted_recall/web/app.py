@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rusted_recall import auth, services
+from rusted_recall import auth, services, worker
 from rusted_recall import usage as usage_metering
 from rusted_recall.config import (
     EVIDENCE_WEIGHTS,
@@ -149,6 +149,7 @@ def diagnostics(request: Request) -> HTMLResponse:
         storage_health = f"unavailable: {exc}"
     runner = get_runner()
     with session_scope() as s:
+        queue_depth = worker.queue_depth(s)
         latest_run = s.execute(
             select(GenerationRun).order_by(GenerationRun.created_at.desc())
         ).scalars().first()
@@ -197,6 +198,8 @@ def diagnostics(request: Request) -> HTMLResponse:
         "db_health": db_health,
         "storage_health": storage_health,
         "worker_health": type(runner).__name__,
+        "worker_mode": "inline" if st.run_inline_worker else "separate-process",
+        "queue_depth": queue_depth,
         "latest_run": run_ctx,
         "latest_object": obj_ctx,
         "provider_verified": provider_verified,

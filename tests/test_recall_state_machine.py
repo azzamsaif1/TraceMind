@@ -28,6 +28,19 @@ def test_partial_then_complete():
     assert can_transition(recall.PARTIALLY_COMPLETED, recall.COMPLETED)
 
 
+def test_partial_can_retry_via_repairing():
+    # Retry path: a partially_completed recall must be able to go back to
+    # repairing (this is what lets retry-failed-only re-derive the final state).
+    assert can_transition(recall.PARTIALLY_COMPLETED, recall.REPAIRING)
+
+
+def test_no_illegal_same_state_partial_transition():
+    # Regression for IllegalTransitionError partially_completed->partially_completed.
+    assert not can_transition(recall.PARTIALLY_COMPLETED, recall.PARTIALLY_COMPLETED)
+    with pytest.raises(IllegalTransitionError):
+        transition(recall.PARTIALLY_COMPLETED, recall.PARTIALLY_COMPLETED)
+
+
 def test_completed_is_terminal():
     assert not can_transition(recall.COMPLETED, recall.ANALYSING)
 
