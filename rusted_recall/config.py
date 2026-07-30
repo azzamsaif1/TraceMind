@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # --- Genblaze ---
     genblaze_enabled: bool = False
 
+    # --- Repair worker ---
+    # When true (default), the web process also drains the durable repair queue
+    # on a background thread (dev / single-dyno). Set false when a dedicated
+    # ``python -m rusted_recall.worker`` service is deployed (see render.yaml),
+    # so the web process only *enqueues* and the separate worker executes.
+    run_inline_worker: bool = True
+
     # --- Database ---
     database_url: str = "postgresql+psycopg://rusted:rusted@localhost:5432/rusted_recall"
 

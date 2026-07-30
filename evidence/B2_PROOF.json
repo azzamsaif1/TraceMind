@@ -1,0 +1,27 @@
+{
+  "generated_at": "20260730T081116Z",
+  "backend": "backblaze-b2",
+  "bucket": "Tracemind-storage",
+  "endpoint": "https://s3.eu-central-003.backblazeb2.com",
+  "objects": {
+    "original": {
+      "key": "_proof/b2/20260730T081116Z/original.png",
+      "sha256": "67439722c02c9a4de01e163e64f95aa22677dd49c2657dc7374d0815e1f48c17",
+      "bytes": 272
+    },
+    "repaired_new_version": {
+      "key": "_proof/b2/20260730T081116Z/repaired_v2.png",
+      "sha256": "56be97ab68caeae029d716f583c8197d2dbfc9a633a729ea66e97223bd93f24e",
+      "bytes": 273
+    }
+  },
+  "checks": {
+    "original_write_readback_hash_match": true,
+    "repaired_write_readback_hash_match": true,
+    "original_unchanged_after_new_version": true,
+    "distinct_object_keys_no_overwrite": true,
+    "presigned_get_returns_same_bytes": true
+  },
+  "note": "No provider/paid call performed. Presigned URL omitted (short-lived, private).",
+  "result": "PASS"
+}

@@ -351,6 +351,37 @@ class RepairJob(Base):
     )
 
 
+class RepairQueueItem(Base):
+    """Durable dispatch queue for repair work (directive section 10).
+
+    The web process enqueues one item per repair request; a *separate* worker
+    process claims and executes it. Persisting the task (not an in-memory queue)
+    is what makes the work survive a web/worker restart, lets duplicate requests
+    be de-duplicated, and lets stale claims be recovered. The unit of work is a
+    whole recall — ``services.approve_and_repair`` is idempotent, so re-running a
+    claimed-but-crashed item cannot create duplicate versions/manifests/jobs.
+    """
+
+    __tablename__ = "repair_queue_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    recall_event_id: Mapped[str] = mapped_column(ForeignKey("recall_events.id"), index=True)
+    asset_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default="queued", index=True
+    )  # queued | claimed | done | failed
+    claimed_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class GenerationRun(Base):
     __tablename__ = "generation_runs"
 
