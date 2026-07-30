@@ -241,7 +241,12 @@ def ingest_asset(
     """Real ingestion pipeline (directive section 3, step 3)."""
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValidationError(f"file too large: {len(data)} bytes > {MAX_UPLOAD_BYTES}")
-    mime = content_type_for(data)
+    if not data:
+        raise ValidationError("empty upload")
+    try:
+        mime = content_type_for(data)
+    except Exception as exc:  # noqa: BLE001 - undecodable/corrupt image bytes
+        raise ValidationError("file is not a readable image (PNG, JPEG or WebP)") from exc
     if mime not in ALLOWED_MIME:
         raise ValidationError(f"unsupported media type: {mime}")
 

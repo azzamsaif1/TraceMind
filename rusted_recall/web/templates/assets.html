@@ -3,6 +3,54 @@
 {% block body %}
 <h1>Asset Registry</h1>
 <p class="sub">Every ingested asset with its immutable versions, hashes and B2 keys.</p>
+
+{% if can_edit %}
+<div class="card" style="margin-bottom:20px;">
+  <h2 style="margin-top:0;">Register a company asset</h2>
+  {% if not sources %}
+  <p class="banner warn">Register at least one <a href="/sources">Source of Truth</a> first so Rusted can detect how this asset depends on your approved reality.</p>
+  {% endif %}
+  <p class="muted" style="font-size:13px;">Rusted stores an immutable version, hashes it, and automatically infers dependency evidence against your Sources of Truth.</p>
+  <form method="post" action="/assets" enctype="multipart/form-data">
+    <div class="row">
+      <div style="flex:1;min-width:220px;">
+        <label for="a-name">Asset name</label>
+        <input id="a-name" name="name" required placeholder="e.g. Homepage Hero Banner" />
+      </div>
+      <div style="flex:1;min-width:160px;">
+        <label for="a-type">Asset type</label>
+        <input id="a-type" name="asset_type" value="other" placeholder="hero_ad / banner / print / other" />
+      </div>
+      <div style="flex:1;min-width:140px;">
+        <label for="a-campaign">Campaign (optional)</label>
+        <input id="a-campaign" name="campaign" placeholder="e.g. Spring 2026" />
+      </div>
+    </div>
+    <label for="a-file">Media file (PNG/JPG/WebP, ≤25MB)</label>
+    <input id="a-file" name="file" type="file" accept="image/png,image/jpeg,image/webp" required />
+    <div class="row">
+      <div style="flex:1;min-width:200px;">
+        <label for="a-source">Depends on Source of Truth (optional)</label>
+        <select id="a-source" name="declared_source_item_id">
+          <option value="">— auto-detect only —</option>
+          {% for s in sources %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px;">
+        <label for="a-parent">Derived from asset (optional)</label>
+        <select id="a-parent" name="parent_asset_id">
+          <option value="">— none (original) —</option>
+          {% for a in assets %}<option value="{{ a.asset.id }}">{{ a.asset.name }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <label for="a-text">On-image text (optional — used if OCR is unavailable)</label>
+    <input id="a-text" name="on_image_text" placeholder="Any claim/wording printed on the asset" />
+    <div style="margin-top:14px;"><button class="btn" type="submit">Register asset</button></div>
+  </form>
+</div>
+{% endif %}
+
 {% if assets %}
 <table>
   <tr><th>Preview</th><th>Asset</th><th>Type</th><th>Status</th><th>Versions</th></tr>
@@ -11,7 +59,7 @@
     <td>
       {% set first = a.versions[0] %}
       {% if first and first.preview_b2_key %}
-        <img class="thumb" src="/obj?key={{ first.preview_b2_key|urlencode }}" alt="preview" />
+        <img class="thumb" src="/obj?key={{ first.preview_b2_key|urlencode }}" alt="preview of {{ a.asset.name }}" />
       {% endif %}
     </td>
     <td>{{ a.asset.name }}<br><span class="muted">{{ a.asset.campaign }}</span></td>
@@ -25,7 +73,45 @@
   </tr>
   {% endfor %}
 </table>
+
+{% if can_edit %}
+<div class="card" style="margin-top:20px;">
+  <h2 style="margin-top:0;">Declare a dependency</h2>
+  <p class="muted" style="font-size:13px;">Optional: manually assert that an asset depends on a Source of Truth or another asset, in addition to Rusted's automatic evidence.</p>
+  <form method="post" action="/dependencies">
+    <div class="row">
+      <div style="flex:1;min-width:220px;">
+        <label for="d-source">Depends on</label>
+        <select id="d-source" name="source_node" required>
+          {% for s in sources %}<option value="sot:{{ s.id }}">Source: {{ s.name }}</option>{% endfor %}
+          {% for a in assets %}<option value="asset:{{ a.asset.id }}">Asset: {{ a.asset.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div style="flex:1;min-width:220px;">
+        <label for="d-target">Affected asset</label>
+        <select id="d-target" name="target_asset_id" required>
+          {% for a in assets %}<option value="{{ a.asset.id }}">{{ a.asset.name }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <label for="d-note">Note (optional)</label>
+    <input id="d-note" name="note" placeholder="Why this dependency exists" />
+    <div style="margin-top:14px;"><button class="btn secondary" type="submit">Declare dependency</button></div>
+  </form>
+</div>
+{% endif %}
+
+{% if can_edit %}
+<p style="margin-top:20px;"><a class="btn" href="/recalls/new">Next: change truth &amp; run a Recall →</a></p>
+{% endif %}
+
 {% else %}
-<p class="muted">No assets yet. Run the demo seed to populate the LumaLeaf campaign.</p>
+<p class="muted">
+  {% if can_edit %}
+  Add company assets above so Rusted can track how your media depends on your approved truth.
+  {% else %}
+  No assets yet.
+  {% endif %}
+</p>
 {% endif %}
 {% endblock %}

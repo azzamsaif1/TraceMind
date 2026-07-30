@@ -3,9 +3,48 @@
 {% block body %}
 <h1>Source-of-Truth Registry</h1>
 <p class="sub">Canonical items whose changes trigger recalls — packages, claims, prices, licensed faces/voices.</p>
+
+{% if can_edit %}
+<div class="card" style="margin-bottom:20px;">
+  <h2 style="margin-top:0;">Register a Source of Truth</h2>
+  <p class="muted" style="font-size:13px;">Define an approved reality your media depends on. A reference image is optional but improves visual dependency detection.</p>
+  <form method="post" action="/sources" enctype="multipart/form-data">
+    <div class="row">
+      <div style="flex:1;min-width:220px;">
+        <label for="s-name">Name</label>
+        <input id="s-name" name="name" required placeholder="e.g. Flagship Product Package" />
+      </div>
+      <div style="flex:1;min-width:180px;">
+        <label for="s-type">Type</label>
+        <input id="s-type" name="type" value="claim" placeholder="claim / product_package / logo / price / person" />
+      </div>
+      <div style="flex:1;min-width:140px;">
+        <label for="s-region">Region (optional)</label>
+        <input id="s-region" name="region" placeholder="e.g. EU" />
+      </div>
+    </div>
+    <label for="s-desc">Description (optional)</label>
+    <input id="s-desc" name="description" placeholder="What this truth represents" />
+    <div class="row">
+      <div style="flex:1;min-width:180px;">
+        <label for="s-label">Approved value / label (v1)</label>
+        <input id="s-label" name="label" required placeholder="e.g. 24-Hour Vitality" />
+      </div>
+      <div style="flex:2;min-width:220px;">
+        <label for="s-claim">Claim text (v1)</label>
+        <input id="s-claim" name="claim_text" required placeholder="The exact approved claim/wording" />
+      </div>
+    </div>
+    <label for="s-ref">Reference image (optional, PNG/JPG/WebP)</label>
+    <input id="s-ref" name="reference" type="file" accept="image/png,image/jpeg,image/webp" />
+    <div style="margin-top:14px;"><button class="btn" type="submit">Register Source of Truth</button></div>
+  </form>
+</div>
+{% endif %}
+
 {% if items %}
 <table>
-  <tr><th>Item</th><th>Type</th><th>Region</th><th>Versions</th></tr>
+  <tr><th>Item</th><th>Type</th><th>Region</th><th>Versions</th>{% if can_edit %}<th>New approved version</th>{% endif %}</tr>
   {% for i in items %}
   <tr>
     <td>{{ i.item.name }}<br><span class="muted">{{ i.item.description }}</span></td>
@@ -16,10 +55,30 @@
         <div class="mono">v{{ v.version }} · “{{ v.label }}” · claim: {{ v.claim_text }}</div>
       {% endfor %}
     </td>
+    {% if can_edit %}
+    <td>
+      <form method="post" action="/sources/{{ i.item.id }}/versions" enctype="multipart/form-data">
+        <input name="label" required placeholder="new label" style="margin-bottom:6px;" />
+        <input name="claim_text" required placeholder="new claim text" style="margin-bottom:6px;" />
+        <input name="reference" type="file" accept="image/png,image/jpeg,image/webp" style="margin-bottom:6px;" />
+        <button class="btn secondary" type="submit">Add approved version</button>
+      </form>
+    </td>
+    {% endif %}
   </tr>
   {% endfor %}
 </table>
 {% else %}
-<p class="muted">No source-of-truth items yet.</p>
+<p class="muted">
+  {% if can_edit %}
+  Add your first Source of Truth above to define the approved reality your media depends on.
+  {% else %}
+  No source-of-truth items yet.
+  {% endif %}
+</p>
+{% endif %}
+
+{% if can_edit and items %}
+<p style="margin-top:20px;"><a class="btn" href="/assets">Next: register company assets →</a></p>
 {% endif %}
 {% endblock %}
