@@ -17,7 +17,7 @@ from rusted_recall.models import AssetVersion, RepairJob, RepairPlanRow, RepairQ
 from rusted_recall.providers import factory
 from rusted_recall.providers.base import GenerationRequest, ProviderError
 from rusted_recall.storage import get_storage
-from tests.support import LocalEditProvider
+from tests.support import VISUAL_NEW, VISUAL_OLD, LocalEditProvider
 
 
 def _img(color=(30, 120, 60)):
@@ -63,14 +63,14 @@ def _setup(s, storage):
     ws = services.create_workspace(s, "Worker WS")
     item, old_v = services.register_source_of_truth(
         s, storage, ws, type="product_package", name="P", description="d",
-        label="old", claim_text="old claim", reference_image=_img(),
+        label="old", claim_text="old claim", reference_image=VISUAL_OLD,
     )
     new_v = services.add_source_version(
         s, ws, item, label="new", claim_text="new claim",
-        storage=storage, reference_image=_img((60, 160, 90)),
+        storage=storage, reference_image=VISUAL_NEW,
     )
     services.ingest_asset(
-        s, storage, ws, data=_img(), filename="a.png", name="A",
+        s, storage, ws, data=VISUAL_OLD, filename="a.png", name="A",
         asset_type="master_package", description="d", declared_source_item_id=item.id,
         on_image_text="old claim",
     )

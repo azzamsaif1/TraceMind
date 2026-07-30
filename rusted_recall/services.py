@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rusted_recall import evidence as ev
+from rusted_recall import native
 from rusted_recall import recall as recall_fsm
 from rusted_recall import usage as usage_metering
 from rusted_recall.changeset import ChangeSet, propose_changeset
@@ -47,7 +48,14 @@ from rusted_recall.models import (
     ValidationResultRow,
     Workspace,
 )
-from rusted_recall.planner import MinimalRepairPlanner, PlannerAsset
+from rusted_recall.planner import (
+    METHOD_DETERMINISTIC_CROP,
+    METHOD_DETERMINISTIC_RESIZE,
+    METHOD_MANUAL_REVIEW,
+    METHOD_TEXT_OVERLAY,
+    MinimalRepairPlanner,
+    PlannerAsset,
+)
 from rusted_recall.propagation import (
     AssetInput,
     ChangePropagationEngine,
@@ -667,6 +675,7 @@ def build_and_store_repair_plan(
     version: AssetVersion,
     provider_name: str,
     model: str,
+    method: str = "controlled_regeneration",
 ) -> RepairPlanRow:
     old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
     new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
@@ -679,15 +688,31 @@ def build_and_store_repair_plan(
         new_reference=new_v.label if new_v else "new",
         market=", ".join(recall.markets or []) or "global",
     )
+    is_native = native.is_native_method(method)
+    # A deterministic/native operation is executed locally and MUST NOT record a
+    # generative provider (spec §1: provider calls == 0 for native plans).
+    plan_provider = "native" if is_native else provider_name
+    plan_model = f"deterministic:{method}" if is_native else model
+    operation_spec: dict = {
+        "instruction": instruction,
+        "width": version.width,
+        "height": version.height,
+        "method": method,
+        "native": is_native,
+    }
+    if is_native:
+        operation_spec["new_claim"] = new_v.claim_text if new_v else ""
+        operation_spec["old_claim"] = old_v.claim_text if old_v else ""
+        operation_spec["parent_asset_id"] = asset.parent_asset_id
     plan = RepairPlan(
         asset_id=asset.id,
         asset_version_id=version.id,
         recall_event_id=recall.id,
         changed_element=f"{old_v.label if old_v else ''} -> {new_v.label if new_v else ''}",
-        editing_method="controlled_regeneration",
-        provider=provider_name,
-        model=model,
-        operation_spec={"instruction": instruction, "width": version.width, "height": version.height},
+        editing_method=method,
+        provider=plan_provider,
+        model=plan_model,
+        operation_spec=operation_spec,
         reference_inputs=[v for v in [version.b2_key, old_v.b2_key if old_v else None, new_v.b2_key if new_v else None] if v],
         expected_dimensions=(version.width, version.height) if version.width and version.height else None,
         validation_checks=["decodes", "dimensions_ok", "differs_from_original", "new_claim_present"],
@@ -719,6 +744,185 @@ def build_and_store_repair_plan(
     _track_object(session, workspace.id, stored, "repair_plan")
     audit(session, workspace.id, "repair.plan_created", {"asset_id": asset.id, "plan_id": row.id}, recall_event_id=recall.id)
     return row
+
+
+def _repaired_bytes_for_parent(
+    session: Session, storage: StorageBackend, parent_asset_id: str
+) -> tuple[bytes, str] | None:
+    """Latest repaired version bytes for a parent asset (needed to rebuild a
+    deterministic derivative from its repaired parent). Returns (bytes, key)."""
+    pv = session.execute(
+        select(AssetVersion)
+        .where(AssetVersion.asset_id == parent_asset_id, AssetVersion.origin == "repaired")
+        .order_by(AssetVersion.version.desc())
+    ).scalars().first()
+    if pv is None or not pv.b2_key or not storage.exists(pv.b2_key):
+        return None
+    return storage.get_bytes(pv.b2_key), pv.b2_key
+
+
+def execute_native_repair_job(
+    session: Session,
+    storage: StorageBackend,
+    workspace: Workspace,
+    recall: RecallEvent,
+    plan_row: RepairPlanRow,
+) -> RepairJob:
+    """Execute a DETERMINISTIC repair locally — no generative provider is ever
+    invoked (spec §1 hard invariant). Produces a real repaired artifact, an
+    immutable version, B2 persistence + read-back hash, validation, manifest and
+    provenance, exactly like the generative path but computed natively."""
+    asset = session.get(Asset, plan_row.asset_id)
+    version = session.get(AssetVersion, plan_row.asset_version_id)
+    if asset is None or version is None:
+        raise ValueError("repair plan references a missing asset or version")
+    plan = plan_row.plan
+    op = plan["operation_spec"]
+    method = op.get("method") or plan.get("editing_method")
+
+    existing = session.execute(
+        select(RepairJob).where(
+            RepairJob.idempotency_key == plan_row.idempotency_key,
+            RepairJob.status == "completed",
+        )
+    ).scalar_one_or_none()
+    if existing:
+        return existing
+
+    job = RepairJob(
+        recall_event_id=recall.id,
+        repair_plan_id=plan_row.id,
+        asset_id=asset.id,
+        idempotency_key=plan_row.idempotency_key,
+        status="running",
+        stage="native_transform",
+    )
+    session.add(job)
+    session.flush()
+
+    with log_context(workspace_id=workspace.id, recall_id=recall.id, asset_id=asset.id, job_id=job.id):
+        original_bytes = storage.get_bytes(version.b2_key)
+        old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
+        new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
+
+        # Produce the repaired bytes deterministically. Never calls a provider.
+        if method in (METHOD_DETERMINISTIC_CROP, METHOD_DETERMINISTIC_RESIZE):
+            parent_id = op.get("parent_asset_id") or asset.parent_asset_id
+            parent = _repaired_bytes_for_parent(session, storage, parent_id) if parent_id else None
+            if parent is None:
+                # Parent was not repaired (blocked/failed): a deterministic
+                # rebuild has no valid source. Honest blocked state, no fake output.
+                job.status = "failed"
+                job.error_category = "validation_failure"
+                job.error_detail = "deterministic rebuild requires a repaired parent version"
+                audit(session, workspace.id, "repair.blocked",
+                      {"asset_id": asset.id, "reason": "parent not repaired"}, recall_event_id=recall.id)
+                return job
+            output = native.rebuild_from_parent(
+                parent[0], width=version.width or 0, height=version.height or 0, method=method
+            )
+        else:  # METHOD_TEXT_OVERLAY (and any other native method)
+            output = native.apply_text_overlay(
+                original_bytes,
+                new_claim=op.get("new_claim") or (new_v.claim_text if new_v else ""),
+                old_claim=op.get("old_claim") or (old_v.claim_text if old_v else None),
+            )
+
+        keys = ObjectKeys(workspace.id)
+        new_version_id = new_id()
+
+        job.stage = "validation"
+        val = validate_repaired_image(
+            output,
+            original_bytes=original_bytes,
+            original_phash=version.phash,
+            expected_dimensions=(version.width, version.height) if version.width and version.height else None,
+            expected_mime="image/png",
+            new_claim_text=new_v.claim_text if new_v else None,
+            deprecated_claim_text=old_v.claim_text if old_v else None,
+            extracted_text=extract_text(output),
+        )
+
+        out_key = keys.repaired_output(asset.id, new_version_id, "repaired.png")
+        stored = storage.put_bytes(out_key, output, "image/png", metadata={"sha256": val.output_sha256 or ""})
+        _track_object(session, workspace.id, stored, "repaired_output")
+        # read-back + hash proof (never trust the write blindly)
+        read_back = storage.get_bytes(out_key)
+        if sha256_bytes(read_back) != (val.output_sha256 or sha256_bytes(output)):
+            job.status = "failed"
+            job.error_category = "storage_failure"
+            job.error_detail = "B2 read-back hash mismatch"
+            return job
+
+        new_version = AssetVersion(
+            id=new_version_id,
+            asset_id=asset.id,
+            version=(version.version + 1),
+            origin="repaired",
+            sha256=val.output_sha256 or sha256_bytes(output),
+            phash=perceptual_hash_bytes(output),
+            width=val.output_dimensions[0] if val.output_dimensions else version.width,
+            height=val.output_dimensions[1] if val.output_dimensions else version.height,
+            content_type="image/png",
+            byte_size=len(output),
+            b2_key=out_key,
+            parent_version_id=version.id,
+        )
+        session.add(new_version)
+        session.flush()
+
+        val_key = keys.repaired_validation(asset.id, new_version_id)
+        vstored = storage.put_bytes(val_key, json.dumps(val.as_dict(), indent=2).encode(), "application/json")
+        _track_object(session, workspace.id, vstored, "validation")
+        session.add(
+            ValidationResultRow(
+                repair_job_id=job.id,
+                asset_version_id=new_version_id,
+                passed=val.passed,
+                requires_human_review=val.requires_human_review,
+                checks=val.checks,
+                notes=val.notes,
+                b2_key=val_key,
+            )
+        )
+
+        manifest = build_repair_manifest(
+            recall_event_id=recall.id,
+            source_of_truth_item_id=recall.source_item_id,
+            source_of_truth_version_id=recall.new_version_id,
+            original_asset_id=asset.id,
+            original_asset_version_id=version.id,
+            original_sha256=version.sha256,
+            original_b2_key=version.b2_key,
+            new_asset_version_id=new_version_id,
+            output_sha256=new_version.sha256,
+            output_b2_key=out_key,
+            provider="native",
+            model=f"deterministic:{method}",
+            genblaze_pipeline="native/deterministic",
+            operation_spec=op,
+            caused_by=f"recall:{recall.id}",
+            validation=val.as_dict(),
+        )
+        man_key = keys.repaired_manifest(asset.id, new_version_id)
+        mstored = storage.put_bytes(man_key, json.dumps(manifest, indent=2).encode(), "application/json")
+        new_version.manifest_b2_key = man_key
+        _track_object(session, workspace.id, mstored, "manifest")
+
+        job.result_version_id = new_version_id
+        if val.requires_human_review:
+            job.status = "requires_review"
+            job.stage = "requires_human_review"
+        else:
+            job.status = "completed"
+            job.stage = "completed"
+        audit(
+            session, workspace.id, "repair.completed",
+            {"asset_id": asset.id, "new_version_id": new_version_id,
+             "method": method, "native": True, "validation_passed": val.passed},
+            recall_event_id=recall.id,
+        )
+        return job
 
 
 def execute_repair_job(
@@ -959,11 +1163,43 @@ def approve_and_repair(
     if max_repairs is not None:
         impacts = impacts[:max_repairs]
 
+    # The persisted plan graph is AUTHORITATIVE (spec §1): each asset's method
+    # decides HOW it is repaired. Deterministic methods execute natively (no
+    # provider); only generative methods may touch Genblaze/GMI.
+    method_by_asset: dict[str, str] = {
+        n["asset_id"]: n["method"]
+        for n in (recall.repair_plan_graph or {}).get("nodes", [])
+    }
+
+    def _method_for(asset: Asset) -> str:
+        m = method_by_asset.get(asset.id)
+        if m:
+            return m
+        # Fallback if the asset is not in the stored plan graph: derive from the
+        # change type rather than defaulting to a provider call.
+        try:
+            requires_gen = ChangeSet.from_dict(recall.changeset or {}).requires_generative_repair
+        except Exception:  # noqa: BLE001 - malformed/empty changeset
+            requires_gen = True
+        return "controlled_regeneration" if requires_gen else METHOD_TEXT_OVERLAY
+
+    # Process rebuild-from-parent derivatives AFTER their parents, so the
+    # repaired parent version exists when a deterministic rebuild runs.
+    def _order_key(impact: RecallImpact) -> int:
+        a = session.get(Asset, impact.asset_id)
+        m = _method_for(a) if a is not None else ""
+        return 1 if m in (METHOD_DETERMINISTIC_CROP, METHOD_DETERMINISTIC_RESIZE) else 0
+
+    impacts = sorted(impacts, key=_order_key)
+
     jobs: list[RepairJob] = []
     for impact in impacts:
         asset = session.get(Asset, impact.asset_id)
         if asset is None:
             continue
+        method = _method_for(asset)
+        if method == METHOD_MANUAL_REVIEW:
+            continue  # human review path; not auto-executed
         # Retry-failed-only + idempotency: preserve already-succeeded and
         # review-pending work; only (re)run assets with no job yet or whose last
         # job is a retryable failure.
@@ -984,9 +1220,12 @@ def approve_and_repair(
             session, recall, asset_id=asset.id, decision="approve", reason="auto-approved high confidence"
         )
         plan_row = build_and_store_repair_plan(
-            session, storage, workspace, recall, asset, version, provider_name, model
+            session, storage, workspace, recall, asset, version, provider_name, model, method=method
         )
-        job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
+        if native.is_native_method(method):
+            job = execute_native_repair_job(session, storage, workspace, recall, plan_row)
+        else:
+            job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
         jobs.append(job)
         session.flush()
 

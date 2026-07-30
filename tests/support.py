@@ -14,6 +14,29 @@ from PIL import Image, ImageDraw
 from rusted_recall.providers.base import GenerationRequest, GenerationResult
 
 
+def visual_png(shapes, size=(256, 256)) -> bytes:
+    """Structured image so two versions have a large perceptual-hash distance,
+    forcing a genuine visual (generative-required) change rather than a
+    deterministic text overlay. Used by tests exercising the generative path."""
+    img = Image.new("RGB", size, (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    for kind, box in shapes:
+        if kind == "rect":
+            d.rectangle(box, fill=(0, 0, 0))
+        elif kind == "ellipse":
+            d.ellipse(box, fill=(0, 0, 0))
+        elif kind == "line":
+            d.line(box, fill=(0, 0, 0), width=8)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# Two canonical, perceptually-distinct frames for "generative required" scenarios.
+VISUAL_OLD = visual_png([("rect", [20, 20, 120, 120])])
+VISUAL_NEW = visual_png([("ellipse", [130, 130, 240, 240]), ("line", [0, 0, 256, 256])])
+
+
 class LocalEditProvider:
     name = "test-local-edit"
     model = "test/local-edit-1"
