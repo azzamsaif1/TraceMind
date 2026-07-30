@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, FastAPI, Form, HTTPException, Request
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from rusted_recall import auth, services, worker
+from rusted_recall import evidence as ev
 from rusted_recall import usage as usage_metering
 from rusted_recall.config import (
     EVIDENCE_WEIGHTS,
@@ -264,21 +265,51 @@ def _scoped_workspace(
     from a different organisation (spec section 28).
     """
     if org is not None:
-        ws = session.execute(
+        # A logged-in company only ever sees its OWN workspace. It must NEVER
+        # fall back to the demo or another tenant's workspace (spec 19.5).
+        return session.execute(
             select(Workspace).where(Workspace.org_id == org.id).order_by(Workspace.created_at)
         ).scalars().first()
-        if ws is not None:
-            return ws
-    demo = session.execute(
+    # Anonymous visitors / judges see the shared demo workspace (org-less).
+    return session.execute(
         select(Workspace).where(Workspace.org_id.is_(None)).order_by(Workspace.created_at)
     ).scalars().first()
-    if demo is not None:
-        return demo
-    return session.execute(select(Workspace).order_by(Workspace.created_at)).scalars().first()
 
 
 def _default_workspace(session, user: User | None = None, org: Organisation | None = None) -> Workspace | None:
     return _scoped_workspace(session, user, org)
+
+
+def _owned_workspace(
+    session: Session, user: User | None, org: Organisation | None
+) -> Workspace | None:
+    """The workspace an authenticated company owns and may edit.
+
+    Returns None for anonymous visitors. Auto-creates the org workspace on
+    first use so a freshly signed-up company can immediately onboard its own
+    data through the product (no seed script, spec section 19.4)."""
+    if user is None or org is None:
+        return None
+    ws = session.execute(
+        select(Workspace).where(Workspace.org_id == org.id).order_by(Workspace.created_at)
+    ).scalars().first()
+    if ws is None:
+        ws = services.create_workspace(session, f"{org.name} Workspace", org_id=org.id)
+    return ws
+
+
+def _can_edit(ws: Workspace | None, org: Organisation | None) -> bool:
+    """True when the viewer owns the workspace they are looking at."""
+    return bool(ws is not None and org is not None and ws.org_id == org.id)
+
+
+def _authorize_workspace(ws: Workspace | None, org: Organisation | None) -> None:
+    """Enforce tenant isolation (spec section 19.5): org-less workspaces are the
+    shared public demo; an org-scoped workspace is only visible to that org."""
+    if ws is None:
+        raise HTTPException(404, "not found")
+    if ws.org_id is not None and (org is None or ws.org_id != org.id):
+        raise HTTPException(404, "not found")
 
 
 def _redirect(location: str, *, cookie: tuple[str, str] | None = None, clear: bool = False) -> Response:
@@ -503,8 +534,10 @@ def command_center(request: Request, rr_session: str | None = Cookie(default=Non
 def asset_registry(request: Request, rr_session: str | None = Cookie(default=None)) -> HTMLResponse:
     with session_scope() as session:
         user = _current_user(session, rr_session)
-        ws = _scoped_workspace(session, user, _current_org(session, user))
+        org = _current_org(session, user)
+        ws = _scoped_workspace(session, user, org)
         assets = []
+        sources = []
         if ws:
             rows = session.execute(
                 select(Asset).where(Asset.workspace_id == ws.id).order_by(Asset.created_at)
@@ -514,8 +547,16 @@ def asset_registry(request: Request, rr_session: str | None = Cookie(default=Non
                     select(AssetVersion).where(AssetVersion.asset_id == a.id).order_by(AssetVersion.version)
                 ).scalars().all()
                 assets.append({"asset": a, "versions": versions})
+            sources = list(session.execute(
+                select(SourceOfTruthItem).where(SourceOfTruthItem.workspace_id == ws.id)
+            ).scalars().all())
         ctx = _base_ctx(request, session, rr_session)
-        ctx.update({"workspace": ws, "assets": assets})
+        ctx.update({
+            "workspace": ws,
+            "assets": assets,
+            "sources": sources,
+            "can_edit": _can_edit(ws, org),
+        })
         return templates.TemplateResponse(request, "assets.html", ctx)
 
 
@@ -523,7 +564,8 @@ def asset_registry(request: Request, rr_session: str | None = Cookie(default=Non
 def source_registry(request: Request, rr_session: str | None = Cookie(default=None)) -> HTMLResponse:
     with session_scope() as session:
         user = _current_user(session, rr_session)
-        ws = _scoped_workspace(session, user, _current_org(session, user))
+        org = _current_org(session, user)
+        ws = _scoped_workspace(session, user, org)
         items = []
         if ws:
             rows = session.execute(
@@ -535,8 +577,157 @@ def source_registry(request: Request, rr_session: str | None = Cookie(default=No
                 ).scalars().all()
                 items.append({"item": it, "versions": versions})
         ctx = _base_ctx(request, session, rr_session)
-        ctx.update({"workspace": ws, "items": items})
+        ctx.update({"workspace": ws, "items": items, "can_edit": _can_edit(ws, org)})
         return templates.TemplateResponse(request, "sources.html", ctx)
+
+
+# --- company onboarding: create truth / assets / dependencies (UI-reachable,
+# spec sections 12, 19.4) -------------------------------------------------
+
+def _require_owner(session: Session, token: str | None) -> tuple[User, Organisation, Workspace]:
+    user = _current_user(session, token)
+    org = _current_org(session, user)
+    ws = _owned_workspace(session, user, org)
+    if user is None or org is None or ws is None:
+        raise HTTPException(status_code=303, detail="login required", headers={"Location": "/login"})
+    return user, org, ws
+
+
+@app.post("/sources", response_model=None)
+async def create_source(
+    request: Request,
+    name: str = Form(...),
+    type: str = Form("claim"),
+    description: str = Form(""),
+    label: str = Form(...),
+    claim_text: str = Form(...),
+    region: str = Form(""),
+    reference: UploadFile | None = File(default=None),
+    rr_session: str | None = Cookie(default=None),
+) -> Response:
+    image = await reference.read() if reference is not None and reference.filename else None
+    with session_scope() as session:
+        user, org, ws = _require_owner(session, rr_session)
+        st = get_settings()
+        try:
+            services.register_source_of_truth(
+                session, get_storage(st), ws,
+                type=type.strip() or "claim", name=name.strip(),
+                description=description.strip(), label=label.strip(),
+                claim_text=claim_text.strip(), region=region.strip(),
+                reference_image=image or None,
+                reference_filename=(reference.filename if reference else "reference.png") or "reference.png",
+            )
+        except (services.ValidationError, ValueError) as exc:
+            raise HTTPException(400, f"invalid source of truth: {exc}") from exc
+    return _redirect("/sources")
+
+
+@app.post("/sources/{item_id}/versions", response_model=None)
+async def add_source_version_route(
+    request: Request,
+    item_id: str,
+    label: str = Form(...),
+    claim_text: str = Form(...),
+    reference: UploadFile | None = File(default=None),
+    rr_session: str | None = Cookie(default=None),
+) -> Response:
+    image = await reference.read() if reference is not None and reference.filename else None
+    with session_scope() as session:
+        user, org, ws = _require_owner(session, rr_session)
+        item = session.get(SourceOfTruthItem, item_id)
+        if item is None or item.workspace_id != ws.id:
+            raise HTTPException(404, "source of truth not found")
+        st = get_settings()
+        services.add_source_version(
+            session, ws, item, label=label.strip(), claim_text=claim_text.strip(),
+            storage=get_storage(st) if image else None,
+            reference_image=image or None,
+            reference_filename=(reference.filename if reference else "reference.png") or "reference.png",
+        )
+    return _redirect("/sources")
+
+
+@app.post("/assets", response_model=None)
+async def create_asset(
+    request: Request,
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    asset_type: str = Form("other"),
+    campaign: str = Form(""),
+    description: str = Form(""),
+    publication_status: str = Form("published"),
+    declared_source_item_id: str = Form(""),
+    parent_asset_id: str = Form(""),
+    on_image_text: str = Form(""),
+    rr_session: str | None = Cookie(default=None),
+) -> Response:
+    data = await file.read()
+    with session_scope() as session:
+        user, org, ws = _require_owner(session, rr_session)
+        declared = declared_source_item_id.strip() or None
+        parent = parent_asset_id.strip() or None
+        if declared is not None:
+            it = session.get(SourceOfTruthItem, declared)
+            if it is None or it.workspace_id != ws.id:
+                raise HTTPException(400, "declared source of truth does not belong to this workspace")
+        if parent is not None:
+            pa = session.get(Asset, parent)
+            if pa is None or pa.workspace_id != ws.id:
+                raise HTTPException(400, "parent asset does not belong to this workspace")
+        st = get_settings()
+        try:
+            services.ingest_asset(
+                session, get_storage(st), ws,
+                data=data, filename=file.filename or "asset.png",
+                name=name.strip(), asset_type=asset_type.strip() or "other",
+                campaign=campaign.strip(), description=description.strip(),
+                publication_status=publication_status.strip() or "published",
+                declared_source_item_id=declared,
+                parent_asset_id=parent,
+                derivation_method="derived" if parent else None,
+                on_image_text=on_image_text.strip(),
+            )
+        except services.ValidationError as exc:
+            raise HTTPException(400, f"invalid asset: {exc}") from exc
+    return _redirect("/assets")
+
+
+@app.post("/dependencies", response_model=None)
+def create_dependency(
+    request: Request,
+    source_node: str = Form(...),
+    target_asset_id: str = Form(...),
+    note: str = Form(""),
+    rr_session: str | None = Cookie(default=None),
+) -> Response:
+    """Manually declare a dependency edge (spec: define/import dependencies).
+
+    `source_node` is either `sot:<item_id>` or `asset:<asset_id>`; the target is
+    always an asset in the owning workspace."""
+    with session_scope() as session:
+        user, org, ws = _require_owner(session, rr_session)
+        target = session.get(Asset, target_asset_id.strip())
+        if target is None or target.workspace_id != ws.id:
+            raise HTTPException(400, "target asset does not belong to this workspace")
+        kind, _, ref = source_node.partition(":")
+        src: SourceOfTruthItem | Asset | None
+        if kind == "sot":
+            src = session.get(SourceOfTruthItem, ref)
+        elif kind == "asset":
+            src = session.get(Asset, ref)
+        else:
+            src = None
+        if src is None or src.workspace_id != ws.id:
+            raise HTTPException(400, "invalid dependency source for this workspace")
+        services._add_edge(
+            session, ws.id,
+            source=source_node.strip(), target=f"asset:{target.id}",
+            e=ev.explicit_declaration(note=note.strip() or "declared via product UI"),
+        )
+        services.audit(session, ws.id, "dependency.declared",
+                       {"source": source_node.strip(), "target": f"asset:{target.id}"})
+    return _redirect("/assets")
 
 
 # --- create recall --------------------------------------------------------
@@ -600,6 +791,7 @@ def recall_detail(request: Request, recall_id: str, rr_session: str | None = Coo
         if recall is None:
             raise HTTPException(404, "recall not found")
         ws = session.get(Workspace, recall.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
         impacts = session.execute(
             select(RecallImpact).where(RecallImpact.recall_event_id == recall_id).order_by(RecallImpact.impact_score.desc())
         ).scalars().all()
@@ -648,6 +840,7 @@ def recall_evidence(request: Request, recall_id: str, rr_session: str | None = C
         if recall is None:
             raise HTTPException(404, "recall not found")
         ws = session.get(Workspace, recall.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
         impacts = list(session.execute(
             select(RecallImpact).where(RecallImpact.recall_event_id == recall_id).order_by(RecallImpact.impact_score.desc())
         ).scalars().all())
@@ -692,11 +885,13 @@ def _graph_payload(session, recall: RecallEvent, edges) -> dict:
 
 
 @app.post("/recalls/{recall_id}/repair")
-def run_repairs(recall_id: str) -> Response:
+def run_repairs(recall_id: str, rr_session: str | None = Cookie(default=None)) -> Response:
     with session_scope() as session:
         recall = session.get(RecallEvent, recall_id)
         if recall is None:
             raise HTTPException(404, "recall not found")
+        ws = session.get(Workspace, recall.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
         wsid = recall.workspace_id
     get_runner().enqueue(RepairTask(workspace_id=wsid, recall_id=recall_id))
     return Response(status_code=303, headers={"Location": f"/recalls/{recall_id}"})
@@ -709,11 +904,14 @@ def review(
     decision: str = Form(...),
     new_classification: str = Form(""),
     reason: str = Form(""),
+    rr_session: str | None = Cookie(default=None),
 ) -> Response:
     with session_scope() as session:
         recall = session.get(RecallEvent, recall_id)
         if recall is None:
             raise HTTPException(404, "recall not found")
+        ws = session.get(Workspace, recall.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
         services.record_review_decision(
             session, recall, asset_id=asset_id, decision=decision,
             new_classification=new_classification or None, reason=reason,
@@ -722,11 +920,13 @@ def review(
 
 
 @app.get("/api/recalls/{recall_id}/status")
-def recall_status(recall_id: str) -> JSONResponse:
+def recall_status(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
     with session_scope() as session:
         recall = session.get(RecallEvent, recall_id)
         if recall is None:
             raise HTTPException(404, "recall not found")
+        ws = session.get(Workspace, recall.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
         jobs = session.execute(
             select(RepairJob).where(RepairJob.recall_event_id == recall_id)
         ).scalars().all()
@@ -752,7 +952,7 @@ _REPORT_RENDERERS: dict[str, tuple[Callable[[Any], str | bytes], str]] = {
 
 
 @app.get("/recalls/{recall_id}/report.{fmt}")
-def download_report(recall_id: str, fmt: str) -> Response:
+def download_report(recall_id: str, fmt: str, rr_session: str | None = Cookie(default=None)) -> Response:
     if fmt not in _REPORT_RENDERERS:
         raise HTTPException(400, "unsupported format")
     with session_scope() as session:
@@ -760,8 +960,8 @@ def download_report(recall_id: str, fmt: str) -> Response:
         if recall is None:
             raise HTTPException(404, "recall not found")
         ws = session.get(Workspace, recall.workspace_id)
-        if ws is None:
-            raise HTTPException(404, "workspace not found")
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
+        assert ws is not None  # guaranteed by _authorize_workspace
         report = services.build_report(session, ws, recall)
     render, media = _REPORT_RENDERERS[fmt]
     body = render(report)
