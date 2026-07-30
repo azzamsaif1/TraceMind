@@ -183,25 +183,32 @@ def test_blind_company_generalises_without_code_changes(env):
 
 
 def test_engine_reasons_without_any_provider(env):
-    """Provider-independence: analysis + planning succeed with NO generative
-    provider configured; a required generative op fails honestly (never faked)."""
+    """Provider-independence (spec §1 hard invariant): the blind company's change
+    is deterministic (text claim + a crop derivative), so with NO generative
+    provider configured the repairs still complete NATIVELY — provider disabled
+    never removes native intelligence, and native work never calls a provider."""
     storage = env
     with db.session_scope() as s:
         ws, recall = _build_blind_company(s, storage)
-        # Impacts + plan already computed above with no provider involved.
+        # Plan is entirely deterministic: zero generative operations.
         assert recall.repair_plan_graph
+        assert recall.repair_plan_graph["generative_operations"] == 0
 
-        # Now attempt repair with an UNCONFIGURED provider.
+        # An UNCONFIGURED provider must never even be touched for a native plan.
         unconfigured = GMICloudProvider(Settings(gmicloud_api_key=None))
         assert unconfigured.configured is False
         jobs = services.approve_and_repair(
             s, storage, ws, recall, GenblazePipeline(primary=unconfigured),
             provider_name="gmicloud", model="seedream-5.0-pro", max_repairs=3,
         )
-        # Honest state: jobs fail with a truthful category; recall not COMPLETED.
-        assert jobs and all(j.status == "failed" for j in jobs)
-        assert all(j.error_category == "authentication" for j in jobs)
-        assert recall.status != recall_fsm.COMPLETED
+        # Native repairs complete despite no provider; recall reaches COMPLETED.
+        assert jobs and all(j.status == "completed" for j in jobs)
+        assert recall.status == recall_fsm.COMPLETED
+        # Real repaired versions were produced locally.
+        repaired = s.execute(
+            select(AssetVersion).where(AssetVersion.origin == "repaired")
+        ).scalars().all()
+        assert repaired
 
 
 def test_reconciliation_is_idempotent_at_fixpoint(env):

@@ -132,27 +132,49 @@ def test_full_recall_slice(env):
         assert d["operations"]["b2_objects_created"] > 0
 
 
+def _shape_img(shapes, size=(256, 256)):
+    """A structured image so two versions have a large perceptual-hash distance,
+    forcing a genuine visual (generative-required) change — not a text overlay."""
+    img = Image.new("RGB", size, (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    for kind, box in shapes:
+        if kind == "rect":
+            d.rectangle(box, fill=(0, 0, 0))
+        elif kind == "ellipse":
+            d.ellipse(box, fill=(0, 0, 0))
+        elif kind == "line":
+            d.line(box, fill=(0, 0, 0), width=8)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def test_repair_disabled_without_provider(env):
-    """Without a configured provider the pipeline is disabled — no fake output."""
+    """A GENERATIVE-required change (visual) fails honestly with no configured
+    provider — the operation is blocked, never faked (spec §7 generative path)."""
     storage = env
+    old_img = _shape_img([("rect", [20, 20, 120, 120])])
+    new_img = _shape_img([("ellipse", [130, 130, 240, 240]), ("line", [0, 0, 256, 256])])
     with db.session_scope() as s:
         ws = services.create_workspace(s, "NoProvider")
         item, old_v = services.register_source_of_truth(
             s, storage, ws, type="product_package", name="P", description="d",
-            label="old", claim_text="old claim", reference_image=_img((1, 2, 3)),
+            label="old", claim_text="old claim", reference_image=old_img,
         )
         new_v = services.add_source_version(
             s, ws, item, label="new", claim_text="new claim",
-            storage=storage, reference_image=_img((4, 5, 6)),
+            storage=storage, reference_image=new_img,
         )
         services.ingest_asset(
-            s, storage, ws, data=_img((1, 2, 3)), filename="a.png", name="A",
+            s, storage, ws, data=old_img, filename="a.png", name="A",
             asset_type="master_package", description="d", declared_source_item_id=item.id,
         )
         recall = services.create_recall_event(
             s, ws, item=item, old_version=old_v, new_version=new_v, reason="r", markets=["US"],
         )
         services.run_impact_analysis(s, ws, recall)
+        # The change is visual → the plan must contain a generative operation.
+        assert recall.repair_plan_graph["generative_operations"] >= 1
 
         from rusted_recall.providers.gmicloud import GMICloudProvider
 
