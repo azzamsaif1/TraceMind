@@ -182,7 +182,9 @@ def diagnostics(request: Request) -> HTMLResponse:
             select(RepairJob).where(RepairJob.status == "failed").order_by(RepairJob.created_at.desc())
         ).scalars().first()
         last_provider_error = None
+        observed_category = None
         if last_failed is not None:
+            observed_category = last_failed.error_category or None
             last_provider_error = {
                 "category": last_failed.error_category or "unknown",
                 "detail": (last_failed.error_detail or "")[:200],
@@ -193,7 +195,7 @@ def diagnostics(request: Request) -> HTMLResponse:
         "settings": st,
         "app_version": app.version,
         "commit_sha": _commit_sha(),
-        "provider": provider_status(st),
+        "provider": provider_status(st, observed_category=observed_category),
         "b2_configured": st.b2_configured,
         "ocr_available": ocr_available(),
         "db_health": db_health,

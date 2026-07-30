@@ -21,6 +21,7 @@
   <tr><td>Worker</td><td class="mono">{{ worker_health }} ({{ worker_mode }})</td></tr>
   <tr><td>Repair queue depth</td><td class="mono">queued={{ queue_depth.queued }} claimed={{ queue_depth.claimed }} done={{ queue_depth.done }} failed={{ queue_depth.failed }}</td></tr>
   <tr><td>Image provider ({{ provider.provider }}) — configured</td><td><span class="pill {{ 'completed' if provider.configured else 'failed' }}">{{ 'key present' if provider.configured else 'not configured' }}</span></td></tr>
+  <tr><td>Provider capability (preflight)</td><td><span class="pill {{ 'completed' if provider.capability.usable else 'failed' }}">{{ provider.capability.state }}</span> <span class="mono">{{ provider.capability.detail }}</span></td></tr>
   <tr><td>Image provider — verified working</td><td><span class="pill {{ 'completed' if provider_verified else 'draft' }}">{{ 'real generation succeeded' if provider_verified else 'not yet verified (no successful real generation)' }}</span></td></tr>
   {% if last_provider_error %}<tr><td>Last provider error</td><td class="mono">{{ last_provider_error.category }} — {{ last_provider_error.detail }} ({{ last_provider_error.at }})</td></tr>{% endif %}
   <tr><td>Provider model</td><td class="mono">{{ provider.model }}</td></tr>
