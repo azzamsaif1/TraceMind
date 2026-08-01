@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from rusted_recall import evidence as ev
 from rusted_recall import native
+from rusted_recall import opportunity as opp
 from rusted_recall import recall as recall_fsm
 from rusted_recall import usage as usage_metering
 from rusted_recall.changeset import ChangeSet, propose_changeset
@@ -38,6 +39,7 @@ from rusted_recall.models import (
     AuditEvent,
     DependencyEdge,
     GenerationRun,
+    Opportunity,
     RecallEvent,
     RecallImpact,
     RepairJob,
@@ -1248,6 +1250,219 @@ def approve_and_repair(
     if recall.status != final:
         _set_status(session, recall, final)
     return jobs
+
+
+def _repaired_parents_from_recall(
+    session: Session, recall: RecallEvent
+) -> dict[str, str]:
+    """Map parent asset_id -> its repaired version id produced BY this recall.
+
+    Causal grounding for opportunities: the enabling fact is a repaired,
+    verified parent version created by this recall's completed jobs."""
+    jobs = session.execute(
+        select(RepairJob).where(
+            RepairJob.recall_event_id == recall.id,
+            RepairJob.status == "completed",
+        )
+    ).scalars().all()
+    out: dict[str, str] = {}
+    for j in jobs:
+        if j.result_version_id:
+            out[j.asset_id] = j.result_version_id
+    return out
+
+
+def discover_opportunities(
+    session: Session,
+    storage: StorageBackend,
+    workspace: Workspace,
+    recall: RecallEvent,
+    *,
+    provider_usable: bool | None = None,
+) -> list[Opportunity]:
+    """Derive Verified Opportunities from a *verified* Recall transition.
+
+    Machine-grounded (not brainstorming): candidates are downstream derivatives
+    whose parent was repaired by this recall. Each candidate is run through
+    causal → constraint → feasibility → counterfactual (see
+    :mod:`rusted_recall.opportunity`) and only surfaced when it passes. Re-running
+    is idempotent — already-discovered opportunities are returned unchanged
+    (spec fixpoint / NO_OP)."""
+    if recall.status not in (recall_fsm.COMPLETED, recall_fsm.PARTIALLY_COMPLETED):
+        return []
+
+    existing = list(
+        session.execute(
+            select(Opportunity).where(Opportunity.recall_event_id == recall.id)
+        ).scalars().all()
+    )
+    if existing:
+        return existing  # idempotent re-discovery
+
+    if provider_usable is None:
+        from rusted_recall.providers.factory import provider_capability
+
+        provider_usable = provider_capability(get_settings()).usable
+
+    repaired_parents = _repaired_parents_from_recall(session, recall)
+    item = session.get(SourceOfTruthItem, recall.source_item_id)
+    new_v = session.get(SourceOfTruthVersion, recall.new_version_id)
+    trigger = {
+        "recall_id": recall.id,
+        "source_of_truth": item.name if item else "",
+        "new_version": new_v.label if new_v else "",
+        "changeset": recall.changeset or {},
+    }
+
+    assets = session.execute(
+        select(Asset).where(Asset.workspace_id == workspace.id)
+    ).scalars().all()
+
+    created: list[Opportunity] = []
+    for asset in assets:
+        if not asset.parent_asset_id:
+            continue
+        parent_repaired_vid = repaired_parents.get(asset.parent_asset_id)
+        parent = session.get(Asset, asset.parent_asset_id)
+        latest = session.execute(
+            select(AssetVersion)
+            .where(AssetVersion.asset_id == asset.id)
+            .order_by(AssetVersion.version.desc())
+        ).scalars().first()
+        already_reconciled = bool(
+            parent_repaired_vid
+            and latest is not None
+            and latest.parent_version_id == parent_repaired_vid
+        )
+        child_repaired = any(
+            j.status == "completed"
+            for j in session.execute(
+                select(RepairJob).where(
+                    RepairJob.recall_event_id == recall.id,
+                    RepairJob.asset_id == asset.id,
+                )
+            ).scalars().all()
+        )
+        candidate = opp.CandidateAsset(
+            asset_id=asset.id,
+            name=asset.name,
+            derivation_method=asset.derivation_method,
+            parent_asset_id=asset.parent_asset_id,
+            parent_repaired=parent_repaired_vid is not None,
+            parent_repaired_version_id=parent_repaired_vid,
+            parent_name=parent.name if parent else "",
+            already_repaired=child_repaired,
+            already_reconciled=already_reconciled,
+            width=latest.width if latest else None,
+            height=latest.height if latest else None,
+        )
+        assessment = opp.assess_reconcile_candidate(
+            candidate, trigger=trigger, provider_usable=bool(provider_usable)
+        )
+        if assessment.status not in (opp.STATUS_VERIFIED, opp.STATUS_BLOCKED):
+            continue  # rejected candidates are not surfaced (NO EVIDENCE -> NO CLAIM)
+        row = Opportunity(
+            workspace_id=workspace.id,
+            recall_event_id=recall.id,
+            kind=assessment.kind,
+            status=assessment.status,
+            title=assessment.title,
+            rationale=assessment.rationale,
+            evidence=assessment.evidence,
+            operations=[o.as_dict() for o in assessment.operations],
+            native_operations=assessment.native_operations,
+            generative_operations=assessment.generative_operations,
+            blocked_operations=assessment.blocked_operations,
+            feasibility_state=assessment.feasibility_state,
+        )
+        session.add(row)
+        session.flush()
+        audit(
+            session, workspace.id, "opportunity.discovered",
+            {"opportunity_id": row.id, "status": row.status, "kind": row.kind},
+            recall_event_id=recall.id,
+        )
+        created.append(row)
+    return created
+
+
+def execute_opportunity(
+    session: Session,
+    storage: StorageBackend,
+    workspace: Workspace,
+    opportunity: Opportunity,
+    pipeline: GenblazePipeline | None,
+    *,
+    provider_name: str = "native",
+    model: str = "",
+) -> Opportunity:
+    """Execute a Verified Opportunity through the SAME real execution engine as
+    repairs. Native operations stay native (zero provider calls); generative
+    operations route through the pipeline only when a provider is usable and are
+    reported as BLOCKED otherwise. Partial execution is reported truthfully
+    (e.g. 8/10). NO EVIDENCE -> NO CLAIM."""
+    if opportunity.status not in (opp.STATUS_VERIFIED, opp.STATUS_EXECUTED):
+        raise ValueError(
+            f"opportunity {opportunity.id} has no executable plan (status={opportunity.status})"
+        )
+    recall = session.get(RecallEvent, opportunity.recall_event_id)
+    if recall is None:
+        raise ValueError("opportunity references a missing recall")
+
+    executed = 0
+    blocked = 0
+    results: list[dict] = []
+    for op_spec in opportunity.operations:
+        asset = session.get(Asset, op_spec["asset_id"])
+        if asset is None:
+            continue
+        method = op_spec["method"]
+        version = session.execute(
+            select(AssetVersion)
+            .where(AssetVersion.asset_id == asset.id, AssetVersion.origin == "uploaded")
+            .order_by(AssetVersion.version.desc())
+        ).scalars().first()
+        if version is None:
+            continue
+        plan_row = build_and_store_repair_plan(
+            session, storage, workspace, recall, asset, version,
+            provider_name, model, method=method,
+        )
+        if native.is_native_method(method):
+            job = execute_native_repair_job(session, storage, workspace, recall, plan_row)
+        elif pipeline is not None and pipeline.configured:
+            job = execute_repair_job(session, storage, workspace, recall, plan_row, pipeline)
+        else:
+            blocked += 1
+            results.append({"asset_id": asset.id, "status": "blocked",
+                            "reason": "generative provider not usable"})
+            continue
+        session.flush()
+        if job.status == "completed":
+            executed += 1
+            results.append({"asset_id": asset.id, "status": "completed",
+                            "version_id": job.result_version_id})
+        else:
+            blocked += 1
+            results.append({"asset_id": asset.id, "status": job.status,
+                            "reason": job.error_detail or job.error_category})
+
+    opportunity.executed_operations = executed
+    opportunity.blocked_operations = blocked
+    opportunity.status = opp.STATUS_EXECUTED
+    opportunity.result = {
+        "executed": executed,
+        "blocked": blocked,
+        "total": len(opportunity.operations),
+        "operations": results,
+    }
+    session.flush()
+    audit(
+        session, workspace.id, "opportunity.executed",
+        {"opportunity_id": opportunity.id, "executed": executed, "blocked": blocked},
+        recall_event_id=recall.id,
+    )
+    return opportunity
 
 
 def build_report(session: Session, workspace: Workspace, recall: RecallEvent, *, elapsed_seconds: float = 0.0):

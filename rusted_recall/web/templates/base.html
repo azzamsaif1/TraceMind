@@ -39,10 +39,32 @@
     .needs_review, .requires_review, .ready_for_review, .partially_completed { background: rgba(74,134,199,.18); color: #85b6e6; }
     .safe, .completed, .approved { background: rgba(63,157,87,.18); color: #7fce97; }
     .draft, .analysing { background: rgba(165,147,127,.16); color: var(--muted); }
-    .btn { display: inline-block; background: var(--rust); color: #fff; border: none; border-radius: 8px;
-      padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .btn { position: relative; display: inline-block; background: var(--rust); color: #fff; border: none; border-radius: 8px;
+      padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: background .12s ease, transform .06s ease, box-shadow .12s ease; }
     .btn:hover { background: var(--rust2); text-decoration: none; }
+    .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(217,119,46,.45); }
+    .btn:active { transform: translateY(1px); }
+    .btn[disabled], .btn.loading { opacity: .6; cursor: not-allowed; pointer-events: none; }
+    .btn.loading { color: transparent; }
+    .btn.loading::after { content: ""; position: absolute; top: 50%; left: 50%; width: 14px; height: 14px;
+      margin: -7px 0 0 -7px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
+      border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .btn.secondary { background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
+    .btn.secondary:hover { background: #31261d; }
+    input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none;
+      border-color: var(--rust2); box-shadow: 0 0 0 3px rgba(217,119,46,.18); }
+    header nav a.active { color: var(--rust2); border-bottom: 2px solid var(--rust2); padding-bottom: 2px; }
+    /* Contextual next-step guide */
+    #guide-fab { position: fixed; right: 20px; bottom: 20px; z-index: 50; }
+    #guide-panel { position: fixed; right: 20px; bottom: 72px; width: 320px; z-index: 50;
+      background: var(--panel); border: 1px solid var(--rust); border-radius: 12px; padding: 16px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.5); display: none; }
+    #guide-panel.open { display: block; }
+    #guide-panel h4 { margin: 0 0 6px; color: var(--rust2); font-size: 15px; }
+    #guide-panel p { margin: 0 0 12px; font-size: 13px; color: var(--text); }
+    #guide-panel .step { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
     .banner { border-radius: 10px; padding: 12px 16px; margin: 0 0 18px; font-size: 14px; border: 1px solid; }
     .banner.warn { background: rgba(217,165,49,.10); border-color: #6b5620; color: #e7c069; }
     .banner.ok { background: rgba(63,157,87,.10); border-color: #2f5c3c; color: #7fce97; }
@@ -83,5 +105,50 @@
   <main>
     {% block body %}{% endblock %}
   </main>
+
+  {% if guide %}
+  <button id="guide-fab" class="btn" type="button" aria-expanded="false" aria-controls="guide-panel">Guide ›</button>
+  <aside id="guide-panel" role="dialog" aria-label="Next step guide">
+    <div class="step">Next step · {{ guide.state.replace('_',' ') }}</div>
+    <h4>{{ guide.title }}</h4>
+    <p>{{ guide.message }}</p>
+    <a class="btn" href="{{ guide.cta_href }}">{{ guide.cta_label }} →</a>
+  </aside>
+  {% endif %}
+
+  <script>
+    // Contextual guide open/close.
+    (function () {
+      var fab = document.getElementById('guide-fab');
+      var panel = document.getElementById('guide-panel');
+      if (fab && panel) {
+        fab.addEventListener('click', function () {
+          var open = panel.classList.toggle('open');
+          fab.setAttribute('aria-expanded', open ? 'true' : 'false');
+          fab.textContent = open ? 'Guide ˅' : 'Guide ›';
+        });
+      }
+    })();
+
+    // Global action feedback: loading + duplicate-submit prevention. Every form
+    // submit disables its submit button and shows a spinner so an action is
+    // never silent and cannot be double-submitted.
+    document.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      var btn = form.querySelector('button[type="submit"], button:not([type])');
+      if (!btn) return;
+      if (form.dataset.submitting === '1') { e.preventDefault(); return; }
+      form.dataset.submitting = '1';
+      btn.classList.add('loading');
+      btn.setAttribute('disabled', 'disabled');
+      // Safety: re-enable if navigation did not occur (validation error, etc.).
+      setTimeout(function () {
+        form.dataset.submitting = '';
+        btn.classList.remove('loading');
+        btn.removeAttribute('disabled');
+      }, 8000);
+    }, true);
+  </script>
 </body>
 </html>

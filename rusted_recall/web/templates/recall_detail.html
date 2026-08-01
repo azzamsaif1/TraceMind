@@ -90,6 +90,63 @@
   {% if not rows|selectattr('repaired')|list %}<p class="muted">No repaired versions yet.</p>{% endif %}
 </div>
 
+<h2 id="opportunities">Verified Opportunities</h2>
+<p class="muted" style="margin-top:-4px">
+  Actions <em>created specifically</em> by this verified state change. Each is
+  machine-grounded: it must pass causal proof, feasibility planning and a
+  counterfactual (it was not already valid before the change) before it is shown.
+  Execute runs through the same real engine and proves every result.
+</p>
+{% if not recall_verified %}
+  <div class="banner warn">Opportunities become available once the recall reaches a verified (completed) state.</div>
+{% else %}
+  <form method="post" action="/recalls/{{ recall.id }}/opportunities" class="single-submit" style="margin-bottom:12px">
+    <button class="btn" type="submit">
+      {% if opportunities %}Re-scan for opportunities{% else %}Discover Verified Opportunities →{% endif %}
+    </button>
+    <span class="muted" style="margin-left:8px">Deterministic &amp; idempotent — re-scanning never duplicates.</span>
+  </form>
+
+  {% if not opportunities %}
+    <p class="muted">No opportunities discovered yet. Click above to derive them from the verified transition.</p>
+  {% endif %}
+
+  {% for o in opportunities %}
+  <div class="card" style="margin-bottom:12px">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <strong>{{ o.title }}</strong>
+      <span class="pill {{ 'completed' if o.status in ['verified','executed'] else ('failed' if o.status=='blocked' else o.status) }}">{{ o.status }}</span>
+    </div>
+    <p style="margin:6px 0">{{ o.rationale }}</p>
+    <div class="mono muted">
+      feasibility: {{ o.feasibility_state }} ·
+      native {{ o.native_operations }} · generative {{ o.generative_operations }} · blocked {{ o.blocked_operations }}
+      {% if o.status == 'executed' %} · executed {{ o.executed_operations }}/{{ o.operations|length }}{% endif %}
+    </div>
+    <details style="margin-top:8px">
+      <summary class="mono">causal + counterfactual evidence</summary>
+      <div class="mono" style="font-size:11px;white-space:pre-wrap">
+why enabled: {{ o.evidence.get('why_enabled','') }}
+counterfactual: already valid before change = {{ o.evidence.get('counterfactual',{}).get('already_valid_before') }}
+  {{ o.evidence.get('counterfactual',{}).get('explanation','') }}
+operations:
+{% for op in o.operations %}  - {{ opp_asset_names.get(op.asset_id, op.asset_id) }} · {{ op.method }} · {{ 'native' if op.native else 'generative' }}{% if op.blocked %} · BLOCKED{% endif %}
+{% endfor %}</div>
+    </details>
+    {% if o.status == 'verified' %}
+    <form method="post" action="/opportunities/{{ o.id }}/execute" class="single-submit" style="margin-top:8px">
+      <button class="btn" type="submit">Execute Opportunity →</button>
+      <span class="muted" style="margin-left:8px">Performs real operations and stores/verifies every artifact.</span>
+    </form>
+    {% elif o.status == 'blocked' %}
+    <div class="banner warn" style="margin-top:8px">BLOCKED — no usable execution path (e.g. generative provider unavailable). No Execute action is offered.</div>
+    {% elif o.status == 'executed' %}
+    <div class="banner ok" style="margin-top:8px">Executed {{ o.executed_operations }}/{{ o.operations|length }} operation(s){% if o.blocked_operations %}, {{ o.blocked_operations }} blocked{% endif %}. See Before/After gallery and audit report for proof.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% endif %}
+
 <h2>Audit Report</h2>
 <table>
   <tr><th>Time</th><th>Actor</th><th>Event</th><th>Detail</th></tr>
