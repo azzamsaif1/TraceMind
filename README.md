@@ -132,13 +132,7 @@ hashing, scoring boundaries, evidence, recall transitions, idempotency, object
 keys, manifests, validation, storage read-back, the full recall E2E journey, and
 the web screens. CI additionally runs **gitleaks** secret scanning.
 
-## Security
 
-See [`docs/SECURITY.md`](docs/SECURITY.md). Credentials were previously committed
-to git history (commits `001130e`, `ba6e9f8`, `2aed6b3`); they are treated as
-compromised and **must be rotated/revoked by the owner** — Devin cannot do this.
-A destructive history scrub also requires owner authorisation. CI secret
-scanning is configured via [`.gitleaks.toml`](.gitleaks.toml).
 
 ## Limitations & honesty
 
