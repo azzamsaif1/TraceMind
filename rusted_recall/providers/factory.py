@@ -14,6 +14,7 @@ from rusted_recall.providers.genblaze_official import (
     sdk_available,
 )
 from rusted_recall.providers.gmicloud import GMICloudProvider
+from rusted_recall.providers.preflight import ProviderCapability, preflight
 
 
 def build_primary_provider(settings: Settings | None = None) -> ImageProvider:
@@ -26,9 +27,21 @@ def build_primary_provider(settings: Settings | None = None) -> ImageProvider:
     return GMICloudProvider(settings)
 
 
-def provider_status(settings: Settings | None = None) -> dict:
+def provider_capability(
+    settings: Settings | None = None, *, observed_category: str | None = None
+) -> ProviderCapability:
+    """Typed provider capability (no paid call). ``observed_category`` refines
+    the state from the most recent real provider attempt when available."""
+    settings = settings or get_settings()
+    return preflight(build_primary_provider(settings), observed_category=observed_category)
+
+
+def provider_status(
+    settings: Settings | None = None, *, observed_category: str | None = None
+) -> dict:
     settings = settings or get_settings()
     provider = build_primary_provider(settings)
+    capability = provider_capability(settings, observed_category=observed_category)
     return {
         "provider": provider.name,
         "model": provider.model,
@@ -36,6 +49,7 @@ def provider_status(settings: Settings | None = None) -> dict:
         "genblaze_enabled": settings.genblaze_enabled,
         "genblaze_official_sdk": sdk_available(),
         "using_official_genblaze": settings.genblaze_enabled and sdk_available(),
+        "capability": capability.as_dict(),
     }
 
 

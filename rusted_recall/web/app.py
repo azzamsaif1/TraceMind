@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rusted_recall import auth, services, worker
+from rusted_recall import auth, guidance, services, worker
 from rusted_recall import evidence as ev
 from rusted_recall import usage as usage_metering
 from rusted_recall.config import (
@@ -36,6 +36,7 @@ from rusted_recall.models import (
     AuditEvent,
     DependencyEdge,
     GenerationRun,
+    Opportunity,
     Organisation,
     RecallEvent,
     RecallImpact,
@@ -182,7 +183,9 @@ def diagnostics(request: Request) -> HTMLResponse:
             select(RepairJob).where(RepairJob.status == "failed").order_by(RepairJob.created_at.desc())
         ).scalars().first()
         last_provider_error = None
+        observed_category = None
         if last_failed is not None:
+            observed_category = last_failed.error_category or None
             last_provider_error = {
                 "category": last_failed.error_category or "unknown",
                 "detail": (last_failed.error_detail or "")[:200],
@@ -193,7 +196,7 @@ def diagnostics(request: Request) -> HTMLResponse:
         "settings": st,
         "app_version": app.version,
         "commit_sha": _commit_sha(),
-        "provider": provider_status(st),
+        "provider": provider_status(st, observed_category=observed_category),
         "b2_configured": st.b2_configured,
         "ocr_available": ocr_available(),
         "db_health": db_health,
@@ -248,10 +251,22 @@ def _current_org(session: Session, user: User | None) -> Organisation | None:
 
 
 def _base_ctx(request: Request, session: Session, token: str | None) -> dict:
-    """Common context injected into every rendered page (nav auth state)."""
+    """Common context injected into every rendered page (nav auth state + the
+    contextual next-step guide derived from real workspace state)."""
     user = _current_user(session, token)
     org = _current_org(session, user)
-    return {"request": request, "current_user": user, "current_org": org}
+    guide = None
+    try:
+        ws = _scoped_workspace(session, user, org)
+        guide = guidance.next_step(session, ws, can_edit=_can_edit(ws, org)).as_dict()
+    except Exception:  # noqa: BLE001 - guidance must never break a page render
+        guide = None
+    return {
+        "request": request,
+        "current_user": user,
+        "current_org": org,
+        "guide": guide,
+    }
 
 
 def _scoped_workspace(
@@ -819,6 +834,16 @@ def recall_detail(request: Request, recall_id: str, rr_session: str | None = Coo
             select(AuditEvent).where(AuditEvent.recall_event_id == recall_id).order_by(AuditEvent.created_at)
         ).scalars().all()
         st = get_settings()
+        opportunities = list(session.execute(
+            select(Opportunity)
+            .where(Opportunity.recall_event_id == recall_id)
+            .order_by(Opportunity.created_at)
+        ).scalars().all())
+        opp_asset_names = {
+            a.id: a.name for a in session.execute(
+                select(Asset).where(Asset.workspace_id == recall.workspace_id)
+            ).scalars().all()
+        }
         ctx = _base_ctx(request, session, rr_session)
         ctx.update({
             "workspace": ws,
@@ -827,6 +852,9 @@ def recall_detail(request: Request, recall_id: str, rr_session: str | None = Coo
             "graph": graph,
             "audits": audits,
             "provider": provider_status(st),
+            "opportunities": opportunities,
+            "opp_asset_names": opp_asset_names,
+            "recall_verified": recall.status in ("completed", "partially_completed"),
         })
         return templates.TemplateResponse(request, "recall_detail.html", ctx)
 
@@ -917,6 +945,55 @@ def review(
             new_classification=new_classification or None, reason=reason,
         )
     return Response(status_code=303, headers={"Location": f"/recalls/{recall_id}"})
+
+
+@app.post("/recalls/{recall_id}/opportunities")
+def discover_opportunities_route(
+    recall_id: str, rr_session: str | None = Cookie(default=None)
+) -> Response:
+    """Derive Verified Opportunities from a verified recall (spec section 3).
+    Idempotent: re-running does not create duplicates."""
+    st = get_settings()
+    storage = get_storage(st)
+    with session_scope() as session:
+        recall = session.get(RecallEvent, recall_id)
+        if recall is None:
+            raise HTTPException(404, "recall not found")
+        ws = session.get(Workspace, recall.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
+        assert ws is not None  # _authorize_workspace raises when ws is None
+        services.discover_opportunities(session, storage, ws, recall)
+    return Response(status_code=303, headers={"Location": f"/recalls/{recall_id}#opportunities"})
+
+
+@app.post("/opportunities/{opportunity_id}/execute")
+def execute_opportunity_route(
+    opportunity_id: str, rr_session: str | None = Cookie(default=None)
+) -> Response:
+    """Execute a Verified Opportunity through the same real engine as repairs.
+    Native operations run inline (zero provider calls); generative operations
+    route through the pipeline only when a provider is usable."""
+    st = get_settings()
+    storage = get_storage(st)
+    with session_scope() as session:
+        opportunity = session.get(Opportunity, opportunity_id)
+        if opportunity is None:
+            raise HTTPException(404, "opportunity not found")
+        ws = session.get(Workspace, opportunity.workspace_id)
+        _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
+        assert ws is not None  # _authorize_workspace raises when ws is None
+        recall_id = opportunity.recall_event_id
+        from rusted_recall.providers.factory import build_primary_provider
+        from rusted_recall.providers.genblaze import GenblazePipeline
+
+        pipeline = GenblazePipeline(primary=build_primary_provider(st), settings=st)
+        if opportunity.status != "verified":
+            raise HTTPException(409, "opportunity has no executable plan")
+        services.execute_opportunity(
+            session, storage, ws, opportunity, pipeline,
+            provider_name="gmicloud", model=st.gmicloud_model,
+        )
+    return Response(status_code=303, headers={"Location": f"/recalls/{recall_id}#opportunities"})
 
 
 @app.get("/api/recalls/{recall_id}/status")

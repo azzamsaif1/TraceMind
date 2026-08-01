@@ -455,3 +455,47 @@ class UsageEvent(Base):
     provider_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Opportunity(Base):
+    """A machine-grounded executable opportunity created by a *verified* Recall
+    state transition (spec section 3, "Verified Opportunity").
+
+    An opportunity is NOT LLM brainstorming: every field is derived from the
+    persisted before-state, ChangeSet, after-state, dependency/lineage graph and
+    available execution capabilities. It is only surfaced as ``verified`` once it
+    has passed causal proof, constraint validation, feasibility planning and
+    counterfactual validation, and it carries an executable plan. When no
+    executable plan exists it is ``blocked``; when the counterfactual shows it
+    was already valid before the change it is ``rejected``.
+    """
+
+    __tablename__ = "opportunities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    recall_event_id: Mapped[str] = mapped_column(
+        ForeignKey("recall_events.id"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(60))
+    # candidate | verified | blocked | rejected | executed
+    status: Mapped[str] = mapped_column(String(20), default="candidate", index=True)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    # Machine-grounded evidence bundle: trigger, causal_path, counterfactual,
+    # required/reusable assets, operations, native/generative/blocked counts,
+    # feasibility_state, cost, verification_contract.
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Ordered executable operations: [{asset_id, method, native, ...}].
+    operations: Mapped[list] = mapped_column(JSON, default=list)
+    native_operations: Mapped[int] = mapped_column(Integer, default=0)
+    generative_operations: Mapped[int] = mapped_column(Integer, default=0)
+    blocked_operations: Mapped[int] = mapped_column(Integer, default=0)
+    feasibility_state: Mapped[str] = mapped_column(String(20), default="unknown")
+    # Execution outcome (populated by Execute Opportunity).
+    executed_operations: Mapped[int] = mapped_column(Integer, default=0)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
