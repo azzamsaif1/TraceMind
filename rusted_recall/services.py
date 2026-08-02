@@ -1291,13 +1291,20 @@ def discover_opportunities(
     if recall.status not in (recall_fsm.COMPLETED, recall_fsm.PARTIALLY_COMPLETED):
         return []
 
-    existing = list(
-        session.execute(
+    audit(
+        session, workspace.id, "opportunity.discovery.started",
+        {"recall_id": recall.id, "recall_status": recall.status},
+        recall_event_id=recall.id,
+    )
+
+    # Deterministic identity: index the already-persisted opportunities for this
+    # recall by their stable dedup_key so re-running discovery is a NO_OP.
+    existing_by_key: dict[str, Opportunity] = {
+        o.dedup_key: o
+        for o in session.execute(
             select(Opportunity).where(Opportunity.recall_event_id == recall.id)
         ).scalars().all()
-    )
-    if existing:
-        return existing  # idempotent re-discovery
+    }
 
     if provider_usable is None:
         from rusted_recall.providers.factory import provider_capability
@@ -1359,11 +1366,43 @@ def discover_opportunities(
         assessment = opp.assess_reconcile_candidate(
             candidate, trigger=trigger, provider_usable=bool(provider_usable)
         )
+        key = opp.dedup_key(
+            workspace_id=workspace.id,
+            recall_id=recall.id,
+            old_version_id=recall.old_version_id,
+            new_version_id=recall.new_version_id,
+            kind=assessment.kind,
+            target_asset_id=asset.id,
+            params={
+                "method": (assessment.operations[0].method
+                           if assessment.operations else ""),
+                "parent_version_id": parent_repaired_vid or "",
+            },
+        )
+        audit(
+            session, workspace.id, "opportunity.candidate.evaluated",
+            {"asset_id": asset.id, "dedup_key": key, "verdict": assessment.status,
+             "rejected_reason": assessment.evidence.get("rejected_reason")},
+            recall_event_id=recall.id,
+        )
+        # Rejected candidates are NOT surfaced as opportunities (NO EVIDENCE ->
+        # NO CLAIM) but their rejection reason is preserved in the audit trail.
         if assessment.status not in (opp.STATUS_VERIFIED, opp.STATUS_BLOCKED):
-            continue  # rejected candidates are not surfaced (NO EVIDENCE -> NO CLAIM)
+            audit(
+                session, workspace.id, "opportunity.rejected",
+                {"asset_id": asset.id, "dedup_key": key,
+                 "reason": assessment.evidence.get("rejected_reason"),
+                 "rationale": assessment.rationale},
+                recall_event_id=recall.id,
+            )
+            continue
+        if key in existing_by_key:
+            created.append(existing_by_key[key])  # idempotent: reuse existing
+            continue
         row = Opportunity(
             workspace_id=workspace.id,
             recall_event_id=recall.id,
+            dedup_key=key,
             kind=assessment.kind,
             status=assessment.status,
             title=assessment.title,
@@ -1377,12 +1416,17 @@ def discover_opportunities(
         )
         session.add(row)
         session.flush()
+        existing_by_key[key] = row
         audit(
-            session, workspace.id, "opportunity.discovered",
-            {"opportunity_id": row.id, "status": row.status, "kind": row.kind},
+            session, workspace.id,
+            "opportunity.verified" if row.status == opp.STATUS_VERIFIED
+            else "opportunity.blocked",
+            {"opportunity_id": row.id, "status": row.status, "kind": row.kind,
+             "dedup_key": key},
             recall_event_id=recall.id,
         )
         created.append(row)
+    session.flush()  # persist audit trail (session has autoflush disabled)
     return created
 
 
@@ -1408,6 +1452,12 @@ def execute_opportunity(
     recall = session.get(RecallEvent, opportunity.recall_event_id)
     if recall is None:
         raise ValueError("opportunity references a missing recall")
+
+    audit(
+        session, workspace.id, "opportunity.execution.started",
+        {"opportunity_id": opportunity.id, "operations": len(opportunity.operations)},
+        recall_event_id=recall.id,
+    )
 
     executed = 0
     blocked = 0
@@ -1457,11 +1507,18 @@ def execute_opportunity(
         "operations": results,
     }
     session.flush()
+    # Truthful terminal event: completed only when every operation ran; if any
+    # operation was blocked/failed the execution is recorded as failed (partial).
+    completed_cleanly = blocked == 0 and executed == len(opportunity.operations)
     audit(
-        session, workspace.id, "opportunity.executed",
-        {"opportunity_id": opportunity.id, "executed": executed, "blocked": blocked},
+        session, workspace.id,
+        "opportunity.execution.completed" if completed_cleanly
+        else "opportunity.execution.failed",
+        {"opportunity_id": opportunity.id, "executed": executed, "blocked": blocked,
+         "total": len(opportunity.operations)},
         recall_event_id=recall.id,
     )
+    session.flush()  # persist audit trail (session has autoflush disabled)
     return opportunity
 
 

@@ -23,6 +23,8 @@ Rejection is truthful and specific:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 
 # Deterministic derivations reconcile natively (zero provider calls); anything
@@ -37,6 +39,35 @@ STATUS_VERIFIED = "verified"
 STATUS_BLOCKED = "blocked"
 STATUS_REJECTED = "rejected"
 STATUS_EXECUTED = "executed"
+
+
+def dedup_key(
+    *,
+    workspace_id: str,
+    recall_id: str,
+    old_version_id: str | None,
+    new_version_id: str | None,
+    kind: str,
+    target_asset_id: str,
+    params: dict | None = None,
+) -> str:
+    """Stable identity for an opportunity, derived only from *verified inputs*
+    (spec Phase 1 "Deterministic identity"). Re-running discovery for the same
+    verified state yields the same key, so the unique constraint on
+    (recall_event_id, dedup_key) makes discovery idempotent.
+
+    Deliberately excludes volatile capability signals (e.g. provider usability)
+    so the same logical opportunity is one row regardless of transient state."""
+    payload = {
+        "workspace_id": workspace_id,
+        "recall_id": recall_id,
+        "transition": [old_version_id or "", new_version_id or ""],
+        "kind": kind,
+        "target_asset_id": target_asset_id,
+        "params": params or {},
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 @dataclass

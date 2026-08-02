@@ -18,7 +18,13 @@ from rusted_recall import opportunity as opp
 from rusted_recall import recall as recall_fsm
 from rusted_recall.config import Settings
 from rusted_recall.hashing import sha256_bytes
-from rusted_recall.models import Asset, AssetVersion, GenerationRun, Opportunity
+from rusted_recall.models import (
+    Asset,
+    AssetVersion,
+    AuditEvent,
+    GenerationRun,
+    Opportunity,
+)
 from rusted_recall.providers.base import GenerationRequest, GenerationResult
 from rusted_recall.providers.genblaze import GenblazePipeline
 from rusted_recall.storage import get_storage
@@ -176,6 +182,77 @@ def test_execute_refuses_blocked_opportunity(env):
             services.execute_opportunity(
                 s, storage, ws, o, GenblazePipeline(primary=ExplodingProvider()),
             )
+
+
+def _events(s, ws_id):
+    return [
+        e.event for e in s.execute(
+            select(AuditEvent).where(AuditEvent.workspace_id == ws_id)
+        ).scalars().all()
+    ]
+
+
+def test_discovery_emits_lifecycle_audit_events(env):
+    storage = env
+    with db.session_scope() as s:
+        ws, recall, master = _repair_master_leave_crop(s, storage)
+        services.discover_opportunities(s, storage, ws, recall, provider_usable=False)
+        events = _events(s, ws.id)
+        # spec Phase 1: meaningful, project-convention audit events.
+        assert "opportunity.discovery.started" in events
+        assert "opportunity.candidate.evaluated" in events
+        assert "opportunity.verified" in events
+
+
+def test_rejected_candidate_reason_is_inspectable_in_audit(env):
+    """Once a derivative has been reconciled, re-discovery must REJECT it via the
+    counterfactual gate and preserve an inspectable reason in the audit trail."""
+    storage = env
+    with db.session_scope() as s:
+        ws, recall, master = _repair_master_leave_crop(s, storage)
+        o = services.discover_opportunities(s, storage, ws, recall, provider_usable=False)[0]
+        services.execute_opportunity(
+            s, storage, ws, o, GenblazePipeline(primary=ExplodingProvider()),
+            provider_name="native", model="deterministic",
+        )
+        # Re-discover: the crop is now consistent with the repaired parent, so the
+        # candidate is rejected as valid-before-change (novelty gate).
+        services.discover_opportunities(s, storage, ws, recall, provider_usable=False)
+        rej = s.execute(
+            select(AuditEvent).where(AuditEvent.event == "opportunity.rejected")
+        ).scalars().all()
+        assert rej, "a rejected candidate must leave an audit event"
+        assert any(e.detail.get("reason") == "valid_before_change" for e in rej)
+
+
+def test_dedup_key_is_stable_and_prevents_duplicate_rows(env):
+    storage = env
+    with db.session_scope() as s:
+        ws, recall, master = _repair_master_leave_crop(s, storage)
+        first = services.discover_opportunities(s, storage, ws, recall, provider_usable=False)
+        key1 = first[0].dedup_key
+        assert key1  # a stable identity was assigned
+        # Re-run: identity is stable, no new rows.
+        again = services.discover_opportunities(s, storage, ws, recall, provider_usable=False)
+        assert again[0].dedup_key == key1
+        rows = s.execute(
+            select(Opportunity).where(Opportunity.recall_event_id == recall.id)
+        ).scalars().all()
+        assert len(rows) == 1
+
+
+def test_execution_emits_completed_audit_event(env):
+    storage = env
+    with db.session_scope() as s:
+        ws, recall, master = _repair_master_leave_crop(s, storage)
+        o = services.discover_opportunities(s, storage, ws, recall, provider_usable=False)[0]
+        services.execute_opportunity(
+            s, storage, ws, o, GenblazePipeline(primary=ExplodingProvider()),
+            provider_name="native", model="deterministic",
+        )
+        events = _events(s, ws.id)
+        assert "opportunity.execution.started" in events
+        assert "opportunity.execution.completed" in events
 
 
 # --- Pure lifecycle logic (no DB): causal / counterfactual / feasibility ---
