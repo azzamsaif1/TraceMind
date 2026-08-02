@@ -2486,7 +2486,7 @@ body {
 
 @media (max-width: 1050px) {
     .center-stage>.triumph.compact {
-        top: 6px;
+        top: -35px;
         width: calc(100% - 12px);
         min-height: 48px;
         padding: 7px 9px;
