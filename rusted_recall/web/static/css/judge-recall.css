@@ -2515,3 +2515,19 @@ body {
         display: none;
     }
 }
+
+.brand-summary {
+    margin: 4px 0 0;
+    max-width: 360px;
+    font-size: 10px;
+    line-height: 1.35;
+    font-weight: 500;
+    color: rgba(203, 213, 225, 0.68);
+    letter-spacing: 0.01em;
+}
+
+@media (max-width: 1050px) {
+    .brand-summary {
+        display: none;
+    }
+}

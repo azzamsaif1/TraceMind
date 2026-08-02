@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
     <title>Rusted Recall · Judge</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700;14..32,800;14..32,900&display=swap" rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700;14..32,800;14..32,900&display=swap"
+        rel="stylesheet" />
     <link rel="stylesheet" href="/static/css/judge-recall.css" />
 </head>
+
 <body>
 
     <!-- Real persisted state injected server-side. No demo/hard-coded data. -->
@@ -42,19 +46,50 @@
         <button class="close-btn" id="closeDrawer">✕</button>
         <h3 id="drawerTitle">Asset Details</h3>
         <div class="j-preview" id="drawerPreview" style="display:none;">
-            <figure><figcaption>Before</figcaption><img id="dBefore" alt="before" /></figure>
-            <figure><figcaption>After</figcaption><img id="dAfter" alt="after" /></figure>
+            <figure>
+                <figcaption>Before</figcaption><img id="dBefore" alt="before" />
+            </figure>
+            <figure>
+                <figcaption>After</figcaption><img id="dAfter" alt="after" />
+            </figure>
         </div>
         <div class="grid" id="drawerGrid">
-            <div class="item"><div class="label">Classification</div><div class="value" id="dClass">—</div></div>
-            <div class="item"><div class="label">Impact score</div><div class="value" id="dImpact">—</div></div>
-            <div class="item"><div class="label">Dependency Path</div><div class="value" id="dPath">—</div></div>
-            <div class="item"><div class="label">Repair Method</div><div class="value" id="dMethod">—</div></div>
-            <div class="item"><div class="label">Job Status</div><div class="value" id="dStatus">—</div></div>
-            <div class="item"><div class="label">Error Category</div><div class="value" id="dError">—</div></div>
-            <div class="item"><div class="label">B2 Key</div><div class="value"><span class="mono" id="dB2">—</span></div></div>
-            <div class="item"><div class="label">Versions</div><div class="value" id="dVersions">—</div></div>
-            <div class="item"><div class="label">SHA-256</div><div class="value"><span class="mono" id="dEvidence">—</span></div></div>
+            <div class="item">
+                <div class="label">Classification</div>
+                <div class="value" id="dClass">—</div>
+            </div>
+            <div class="item">
+                <div class="label">Impact score</div>
+                <div class="value" id="dImpact">—</div>
+            </div>
+            <div class="item">
+                <div class="label">Dependency Path</div>
+                <div class="value" id="dPath">—</div>
+            </div>
+            <div class="item">
+                <div class="label">Repair Method</div>
+                <div class="value" id="dMethod">—</div>
+            </div>
+            <div class="item">
+                <div class="label">Job Status</div>
+                <div class="value" id="dStatus">—</div>
+            </div>
+            <div class="item">
+                <div class="label">Error Category</div>
+                <div class="value" id="dError">—</div>
+            </div>
+            <div class="item">
+                <div class="label">B2 Key</div>
+                <div class="value"><span class="mono" id="dB2">—</span></div>
+            </div>
+            <div class="item">
+                <div class="label">Versions</div>
+                <div class="value" id="dVersions">—</div>
+            </div>
+            <div class="item">
+                <div class="label">SHA-256</div>
+                <div class="value"><span class="mono" id="dEvidence">—</span></div>
+            </div>
         </div>
         <div class="j-causal" id="dCausalWrap" style="display:none;">
             <div class="label">Causal reason</div>
@@ -78,6 +113,10 @@
             <div class="brand">
                 <h1>Rusted Recall</h1>
                 <span class="tag">Living Brand Intelligence</span>
+                <p class="brand-summary">
+                    Traces verified source changes, identifies affected assets,
+                    repairs only what is necessary, and preserves verifiable evidence.
+                </p>
             </div>
             <div class="status-group">
                 <div class="status-pill">
@@ -91,7 +130,8 @@
                 </div>
                 <div class="j-nav">
                     <a class="j-fullprod" href="/app" target="_blank" rel="noopener">Explore Full Product ↗</a>
-                    <a class="j-subev" href="/submission-evidence" target="_blank" rel="noopener">Submission Evidence</a>
+                    <a class="j-subev" href="/submission-evidence" target="_blank" rel="noopener">Submission
+                        Evidence</a>
                 </div>
             </div>
         </header>
@@ -149,15 +189,34 @@
                     <div class="icon">✅</div>
                     <h2 id="triumphTitle">Brand Consistency Restored</h2>
                     <div class="stats">
-                        <div class="stat"><div class="num" id="tAssets">0</div><div class="desc">Analysed</div></div>
-                        <div class="stat"><div class="num" id="tAffected">0</div><div class="desc">Affected</div></div>
-                        <div class="stat"><div class="num" id="tRepaired">0</div><div class="desc">Repaired</div></div>
-                        <div class="stat"><div class="num" id="tReview">0</div><div class="desc">Review</div></div>
-                        <div class="stat"><div class="num" id="tSaved">0</div><div class="desc">Ops avoided</div></div>
-                        <div class="stat"><div class="num" id="tOpps">0</div><div class="desc">Opportunities</div></div>
+                        <div class="stat">
+                            <div class="num" id="tAssets">0</div>
+                            <div class="desc">Analysed</div>
+                        </div>
+                        <div class="stat">
+                            <div class="num" id="tAffected">0</div>
+                            <div class="desc">Affected</div>
+                        </div>
+                        <div class="stat">
+                            <div class="num" id="tRepaired">0</div>
+                            <div class="desc">Repaired</div>
+                        </div>
+                        <div class="stat">
+                            <div class="num" id="tReview">0</div>
+                            <div class="desc">Review</div>
+                        </div>
+                        <div class="stat">
+                            <div class="num" id="tSaved">0</div>
+                            <div class="desc">Ops avoided</div>
+                        </div>
+                        <div class="stat">
+                            <div class="num" id="tOpps">0</div>
+                            <div class="desc">Opportunities</div>
+                        </div>
                     </div>
                     <div class="verdict" id="triumphVerdict">—</div>
-                    <button class="btn btn-blue" style="margin-top:12px;" id="btnTriumphEvidence">Open Technical Evidence</button>
+                    <button class="btn btn-blue" style="margin-top:12px;" id="btnTriumphEvidence">Open Technical
+                        Evidence</button>
                 </div>
 
             </div>
@@ -221,4 +280,5 @@
 
     <script src="/static/js/judge-recall.js"></script>
 </body>
+
 </html>
