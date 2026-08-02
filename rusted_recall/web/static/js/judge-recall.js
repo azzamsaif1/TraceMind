@@ -33,6 +33,7 @@
     let selectedAssetId = null;
     let pollTimer = null;
     let replaying = false;
+    let triumphCompactTimer = null;
 
     // ---- static journey progress by real status ----
     const STATUS_PROGRESS = {
@@ -359,7 +360,16 @@
     // ---- triumph (only when genuinely verified) ----
     function updateTriumph() {
         const verified = data.status === 'completed';
-        if (!verified) { triumph.style.display = 'none'; orbitStage.classList.remove('breathing'); return; }
+        if (!verified) {
+            if (triumphCompactTimer) {
+                clearTimeout(triumphCompactTimer);
+                triumphCompactTimer = null;
+            }
+            triumph.classList.remove('compact');
+            triumph.style.display = 'none';
+            orbitStage.classList.remove('breathing');
+            return;
+        }
         const s = data.summary || {};
         $('tAssets').textContent = s.assets_analysed || 0;
         $('tAffected').textContent = s.affected || 0;
@@ -370,7 +380,17 @@
         // Only claim B2 verification when the engine actually stored + hashed it.
         $('triumphVerdict').textContent = s.storage_verified ? 'Stored on B2 · Verified' : 'Recall verified';
         triumph.style.display = 'flex';
+        triumph.classList.remove('compact');
         orbitStage.classList.add('breathing');
+
+        // Keep the cinematic completion moment, then collapse it into a
+        // compact non-blocking banner so the real asset graph stays readable
+        // and every node remains directly interactive.
+        if (triumphCompactTimer) clearTimeout(triumphCompactTimer);
+        triumphCompactTimer = setTimeout(() => {
+            triumph.classList.add('compact');
+            triumphCompactTimer = null;
+        }, 1800);
     }
 
     // ---- opportunities ----
