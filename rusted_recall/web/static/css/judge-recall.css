@@ -2409,8 +2409,8 @@ body {
 }
 
 .center-stage>.triumph.compact {
-    inset: 24px auto auto 50%;
-    /* <--- التعديل هنا: 10px أصبحت 24px */
+    inset: -37px auto auto 50%;
+    /* <---  : 10px  24px */
     width: min(520px, calc(100% - 24px));
     height: auto;
     min-height: 54px;
