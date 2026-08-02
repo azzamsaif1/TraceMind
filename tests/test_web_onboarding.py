@@ -205,6 +205,47 @@ def test_create_routes_require_login(client):
     assert r.headers["location"] == "/login"
 
 
+def test_deterministic_derivation_method_is_persisted(client):
+    """A company can declare a crop/resize derivation through the UI so the
+    child reconciles natively (zero provider calls) — the deterministic-rebuild
+    innovation must be reachable without editing source or SQL."""
+    from sqlalchemy import select
+
+    from rusted_recall import db
+    from rusted_recall.models import Asset
+
+    _signup(client, "deriv@co.example", "DerivCo")
+    r = client.post(
+        "/assets",
+        data={"name": "Master Banner", "asset_type": "hero_ad", "on_image_text": "Hi"},
+        files={"file": ("master.png", _png((10, 20, 30), (400, 300)), "image/png")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    with db.session_scope() as s:
+        master = s.execute(
+            select(Asset).where(Asset.name == "Master Banner")
+        ).scalar_one()
+        master_id = master.id
+
+    r = client.post(
+        "/assets",
+        data={
+            "name": "Square Crop", "asset_type": "hero_ad",
+            "parent_asset_id": master_id, "derivation_method": "crop",
+        },
+        files={"file": ("crop.png", _png((10, 20, 30), (200, 200)), "image/png")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303, r.text
+    with db.session_scope() as s:
+        child = s.execute(
+            select(Asset).where(Asset.name == "Square Crop")
+        ).scalar_one()
+        assert child.parent_asset_id == master_id
+        assert child.derivation_method == "crop"
+
+
 def test_invalid_asset_upload_rejected(client):
     _signup(client, "v@v.example", "ValidCo")
     r = client.post(
