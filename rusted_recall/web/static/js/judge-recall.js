@@ -1,12 +1,3 @@
-/* Rusted Recall — Judge Experience.
- *
- * Preserves the orbital "Living Brand Intelligence" visual identity of the
- * approved design, but every value shown is REAL persisted Rusted Recall state
- * injected by the server (window #judge-data) or fetched from the thin
- * /api/judge/... adapter. There is NO hard-coded demo data and NO simulated
- * completion: the triumph state only appears when the recall is genuinely
- * verified, and animations visualise the actual classifications/jobs.
- */
 (function () {
     'use strict';
 
@@ -71,7 +62,7 @@
     }
     function createOrbitalParticles() {
         const count = 24;
-        orbitalParticles.innerHTML = '';
+        orbitalParticles.replaceChildren();
         for (let i = 0; i < count; i++) {
             const p = document.createElement('div');
             p.className = 'orbital-particle';
@@ -126,8 +117,8 @@
 
     // ---- render orbital nodes from REAL assets ----
     function renderAssets() {
-        orbit.innerHTML = '';
-        ghostLayer.innerHTML = '';
+        orbit.replaceChildren();
+        ghostLayer.replaceChildren();
         const positions = getPositions(data.assets.length);
 
         ghosts = data.assets.map((asset, i) => {
@@ -136,7 +127,20 @@
             el.className = 'asset-ghost';
             el.style.left = pos.x + 'px';
             el.style.top = pos.y + 'px';
-            el.innerHTML = `<span class="preview">${asset.icon}</span><span class="name">${escapeHtml(asset.name)}</span><span class="label">previous</span>`;
+
+            const preview = document.createElement('span');
+            preview.className = 'preview';
+            preview.textContent = asset.icon || '';
+
+            const name = document.createElement('span');
+            name.className = 'name';
+            name.textContent = asset.name || '';
+
+            const label = document.createElement('span');
+            label.className = 'label';
+            label.textContent = 'previous';
+
+            el.append(preview, name, label);
             ghostLayer.appendChild(el);
             return { id: asset.id, el, x: pos.x, y: pos.y };
         });
@@ -150,11 +154,23 @@
             el.dataset.id = asset.id;
             el.style.left = pos.x + 'px';
             el.style.top = pos.y + 'px';
-            el.innerHTML = `
-                <span class="intensity-ring ${intensity > 0 ? 'active ' + ic : ''}"></span>
-                <span class="preview">${asset.icon}</span>
-                <span class="name">${escapeHtml(asset.name)}</span>
-                <span class="status-tag">${(asset.classification || asset.node_status || '').toUpperCase()}</span>`;
+
+            const ring = document.createElement('span');
+            ring.className = `intensity-ring ${intensity > 0 ? 'active ' + ic : ''}`;
+
+            const preview = document.createElement('span');
+            preview.className = 'preview';
+            preview.textContent = asset.icon || '';
+
+            const name = document.createElement('span');
+            name.className = 'name';
+            name.textContent = asset.name || '';
+
+            const statusTag = document.createElement('span');
+            statusTag.className = 'status-tag';
+            statusTag.textContent = (asset.classification || asset.node_status || '').toUpperCase();
+
+            el.append(ring, preview, name, statusTag);
             el.addEventListener('click', () => { selectAsset(asset.id); openDrawer(asset.id); });
             el.addEventListener('mouseenter', () => showGhost(asset.id, true));
             el.addEventListener('mouseleave', () => showGhost(asset.id, false));
@@ -186,13 +202,24 @@
         });
         const target = nodes.find((n) => n.id === id);
         if (target && (coords.length === 0 || coords[coords.length - 1].x !== target.x)) coords.push({ x: target.x, y: target.y });
-        if (coords.length < 2) { depPathSvg.classList.remove('active'); return; }
-        let svg = '';
-        for (let i = 0; i < coords.length - 1; i++) {
-            const hl = i === coords.length - 2 ? 'highlight' : '';
-            svg += `<line x1="${coords[i].x}" y1="${coords[i].y}" x2="${coords[i + 1].x}" y2="${coords[i + 1].y}" class="${hl}" />`;
+        if (coords.length < 2) {
+            depPathSvg.classList.remove('active');
+            depPathSvg.replaceChildren();
+            return;
         }
-        depPathSvg.innerHTML = svg;
+        const fragment = document.createDocumentFragment();
+        for (let i = 0; i < coords.length - 1; i++) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', coords[i].x);
+            line.setAttribute('y1', coords[i].y);
+            line.setAttribute('x2', coords[i + 1].x);
+            line.setAttribute('y2', coords[i + 1].y);
+            if (i === coords.length - 2) {
+                line.setAttribute('class', 'highlight');
+            }
+            fragment.appendChild(line);
+        }
+        depPathSvg.replaceChildren(fragment);
         depPathSvg.classList.add('active');
     }
 
@@ -226,31 +253,48 @@
 
     // ---- timeline ----
     function renderTimeline(activeIndex) {
-        timelineEl.innerHTML = '';
+        timelineEl.replaceChildren();
         (data.timeline || []).forEach((item, idx) => {
             const li = document.createElement('li');
             const isActive = activeIndex !== undefined ? idx === activeIndex : idx === data.timeline.length - 1;
             const isDone = activeIndex !== undefined ? idx < activeIndex : false;
-            li.className = (isActive ? 'active' : '') + (isDone ? ' done' : '');
-            li.innerHTML = `<span class="event-dot"></span><span class="time">${escapeHtml(item.time)}</span><span class="event">${escapeHtml(item.event)}</span>`;
+            if (isActive) li.classList.add('active');
+            if (isDone) li.classList.add('done');
+
+            const dot = document.createElement('span');
+            dot.className = 'event-dot';
+
+            const time = document.createElement('span');
+            time.className = 'time';
+            time.textContent = item.time || '';
+
+            const eventSpan = document.createElement('span');
+            eventSpan.className = 'event';
+            eventSpan.textContent = item.event || '';
+
+            li.append(dot, time, eventSpan);
             timelineEl.appendChild(li);
         });
     }
 
     function renderMilestones() {
-        milestones.innerHTML = '';
-        [['Start', 0], ['Detect', 25], ['Analyze', 50], ['Repair', 75], ['Complete', 100]].forEach(([label, pos]) => {
+        milestones.replaceChildren();
+        const ms = [['Start', 0], ['Detect', 25], ['Analyze', 50], ['Repair', 75], ['Complete', 100]];
+        ms.forEach(([label, pos]) => {
             const done = pos <= (STATUS_PROGRESS[data.status] || 0);
             const el = document.createElement('div');
             el.className = 'milestone' + (done ? ' active' : '');
             el.style.left = pos + '%';
-            el.innerHTML = `<span class="tooltip">${label}</span>`;
+            const tooltip = document.createElement('span');
+            tooltip.className = 'tooltip';
+            tooltip.textContent = label;
+            el.appendChild(tooltip);
             milestones.appendChild(el);
         });
     }
 
     function renderProgressDots() {
-        progressDots.innerHTML = '';
+        progressDots.replaceChildren();
         for (let i = 0; i < 8; i++) {
             const d = document.createElement('div');
             d.className = 'dot-particle';
@@ -265,7 +309,17 @@
     function updateInfo() {
         const src = data.source || {};
         $('recallId').textContent = RECALL_ID.slice(0, 12);
-        $('recallName').innerHTML = `${escapeHtml(src.name || 'Recall')}<br /><span class="sub">${escapeHtml(src.current_claim || '')}</span>`;
+
+        // recallName
+        const nameEl = $('recallName');
+        nameEl.replaceChildren();
+        const nameText = document.createTextNode(src.name || 'Recall');
+        const br = document.createElement('br');
+        const subSpan = document.createElement('span');
+        subSpan.className = 'sub';
+        subSpan.textContent = src.current_claim || '';
+        nameEl.append(nameText, br, subSpan);
+
         $('sourceLabel').textContent = src.name || 'Source of Truth';
         $('currentClaim').textContent = src.current_claim || '—';
         if (src.previous_claim) {
@@ -279,7 +333,14 @@
         $('statusBadge').textContent = statusLabel;
         $('statusBadge').className = 'status-badge ' + (STATUS_DOT[data.status] || 'idle');
         $('statusDot').className = 'dot ' + (STATUS_DOT[data.status] || '');
-        $('currentOp').innerHTML = `${escapeHtml(data.current_operation || '—')}<span class="cursor-blink"></span>`;
+
+        // currentOp
+        const opEl = $('currentOp');
+        opEl.replaceChildren();
+        const opText = document.createTextNode(data.current_operation || '—');
+        const blinkSpan = document.createElement('span');
+        blinkSpan.className = 'cursor-blink';
+        opEl.append(opText, blinkSpan);
 
         const prog = STATUS_PROGRESS[data.status] || 20;
         progressFill.style.width = prog + '%';
@@ -315,23 +376,44 @@
     // ---- opportunities ----
     function renderOpportunities() {
         const list = $('oppList');
-        list.innerHTML = '';
+        list.replaceChildren();
         const opps = data.opportunities || [];
         if (!opps.length) {
-            list.innerHTML = '<div class="j-empty">No verified opportunities yet.' +
-                (data.status === 'completed' ? ' Use “Discover Verified Opportunities”.' : '') + '</div>';
+            const empty = document.createElement('div');
+            empty.className = 'j-empty';
+            empty.textContent = 'No verified opportunities yet.' +
+                (data.status === 'completed' ? ' Use “Discover Verified Opportunities”.' : '');
+            list.appendChild(empty);
             return;
         }
         opps.forEach((o) => {
-            if (o.status === 'rejected') return; // rejected only under technical evidence
+            if (o.status === 'rejected') return;
             const div = document.createElement('div');
             div.className = 'j-opp';
+
+            const title = document.createElement('div');
+            title.className = 'j-opp-title';
+            title.textContent = o.title || o.kind || 'Opportunity';
+            div.appendChild(title);
+
+            const rationale = document.createElement('div');
+            rationale.className = 'j-opp-sub';
+            rationale.textContent = o.rationale || '';
+            div.appendChild(rationale);
+
             const why = o.why_enabled || (o.counterfactual ? 'Not valid before the verified change.' : '');
-            div.innerHTML = `
-                <div class="j-opp-title">${escapeHtml(o.title || o.kind || 'Opportunity')}</div>
-                <div class="j-opp-sub">${escapeHtml(o.rationale || '')}</div>
-                ${why ? `<div class="j-opp-sub">${escapeHtml(why)}</div>` : ''}
-                <span class="j-opp-status ${o.status}">${o.status}</span>`;
+            if (why) {
+                const whyDiv = document.createElement('div');
+                whyDiv.className = 'j-opp-sub';
+                whyDiv.textContent = why;
+                div.appendChild(whyDiv);
+            }
+
+            const statusSpan = document.createElement('span');
+            statusSpan.className = 'j-opp-status ' + (o.status || '');
+            statusSpan.textContent = o.status || '';
+            div.appendChild(statusSpan);
+
             if (o.executable) {
                 const b = document.createElement('button');
                 b.className = 'btn btn-success';
@@ -447,33 +529,70 @@
         try { ev = await (await fetch(`${API}/evidence`)).json(); } catch (e) { return; }
         const s = ev.summary || {};
         const body = $('evidenceBody');
-        const row = (k, v) => `<div class="row"><span class="k">${k}</span><span>${v}</span></div>`;
-        body.innerHTML = `
-            <div class="j-ev-group"><h4>What changed</h4>
-                ${row('Source', escapeHtml((data.source || {}).name || '—'))}
-                ${row('New', escapeHtml((data.source || {}).current_claim || '—'))}
-                ${row('Previous', escapeHtml((data.source || {}).previous_claim || '—'))}
-            </div>
-            <div class="j-ev-group"><h4>Outcome</h4>
-                ${row('Assets analysed', s.assets_analysed || 0)}
-                ${row('Affected', s.affected || 0)}
-                ${row('Repaired', s.repaired || 0)}
-                ${row('Requiring review', s.requiring_review || 0)}
-                ${row('Operations avoided', s.operations_avoided || 0)}
-                ${row('Verified opportunities', s.verified_opportunities || 0)}
-                ${row('Storage verified', s.storage_verified ? 'yes' : '—')}
-                ${row('Verification state', escapeHtml(s.verification_state || '—'))}
-            </div>
-            <details class="j-ev-details"><summary>Technical details (ChangeSet · repair plan · raw)</summary>
-                <pre>${escapeHtml(JSON.stringify({ changeset: ev.changeset, repair_plan: ev.repair_plan, opportunities: ev.opportunities }, null, 2))}</pre>
-            </details>`;
+        body.replaceChildren();
+
+        function createRow(key, value) {
+            const row = document.createElement('div');
+            row.className = 'row';
+            const kSpan = document.createElement('span');
+            kSpan.className = 'k';
+            kSpan.textContent = key;
+            const vSpan = document.createElement('span');
+            vSpan.textContent = String(value);
+            row.append(kSpan, vSpan);
+            return row;
+        }
+
+        // Group 1: What changed
+        const group1 = document.createElement('div');
+        group1.className = 'j-ev-group';
+        const h4_1 = document.createElement('h4');
+        h4_1.textContent = 'What changed';
+        group1.appendChild(h4_1);
+        group1.appendChild(createRow('Source', (data.source || {}).name || '—'));
+        group1.appendChild(createRow('New', (data.source || {}).current_claim || '—'));
+        group1.appendChild(createRow('Previous', (data.source || {}).previous_claim || '—'));
+        body.appendChild(group1);
+
+        // Group 2: Outcome
+        const group2 = document.createElement('div');
+        group2.className = 'j-ev-group';
+        const h4_2 = document.createElement('h4');
+        h4_2.textContent = 'Outcome';
+        group2.appendChild(h4_2);
+        group2.appendChild(createRow('Assets analysed', s.assets_analysed || 0));
+        group2.appendChild(createRow('Affected', s.affected || 0));
+        group2.appendChild(createRow('Repaired', s.repaired || 0));
+        group2.appendChild(createRow('Requiring review', s.requiring_review || 0));
+        group2.appendChild(createRow('Operations avoided', s.operations_avoided || 0));
+        group2.appendChild(createRow('Verified opportunities', s.verified_opportunities || 0));
+        group2.appendChild(createRow('Storage verified', s.storage_verified ? 'yes' : '—'));
+        group2.appendChild(createRow('Verification state', s.verification_state || '—'));
+        body.appendChild(group2);
+
+        // Details: technical details
+        const details = document.createElement('details');
+        details.className = 'j-ev-details';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Technical details (ChangeSet · repair plan · raw)';
+        details.appendChild(summary);
+        const pre = document.createElement('pre');
+        const jsonStr = JSON.stringify({
+            changeset: ev.changeset,
+            repair_plan: ev.repair_plan,
+            opportunities: ev.opportunities
+        }, null, 2);
+        pre.textContent = jsonStr;
+        details.appendChild(pre);
+        body.appendChild(details);
+
         $('evidenceModal').style.display = 'flex';
     }
     $('closeEvidence').addEventListener('click', () => { $('evidenceModal').style.display = 'none'; });
 
     // ---- shockwave / reverse wave (visualise real transitions) ----
     function triggerShockwave() {
-        shockwaveLayer.innerHTML = '';
+        shockwaveLayer.replaceChildren();
         for (let i = 0; i < 3; i++) {
             const ring = document.createElement('div');
             ring.className = 'shockwave-ring';
@@ -485,17 +604,17 @@
             n.el.style.transform = 'translate(-50%,-50%) scale(1.15)';
             setTimeout(() => { n.el.style.transform = 'translate(-50%,-50%) scale(1)'; }, 400);
         }, idx * 80));
-        setTimeout(() => { shockwaveLayer.innerHTML = ''; }, 3000);
+        setTimeout(() => { shockwaveLayer.replaceChildren(); }, 3000);
     }
     function triggerReverseWave() {
-        reverseWave.innerHTML = '';
+        reverseWave.replaceChildren();
         for (let i = 0; i < 2; i++) {
             const ring = document.createElement('div');
             ring.className = 'ring';
             ring.style.animationDelay = (i * 0.4) + 's';
             reverseWave.appendChild(ring);
         }
-        setTimeout(() => { reverseWave.innerHTML = ''; }, 3500);
+        setTimeout(() => { reverseWave.replaceChildren(); }, 3500);
     }
 
     // ---- replay (visual only, NO backend mutation) ----
@@ -541,7 +660,6 @@
     }
 
     // ---- helpers ----
-    function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
     function shorten(s) { return s.length > 42 ? s.slice(0, 20) + '…' + s.slice(-16) : s; }
     function prettyStatus(s) { return (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || '—'; }
     function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
