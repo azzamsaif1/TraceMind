@@ -50,6 +50,7 @@ from rusted_recall.providers.factory import provider_status
 from rusted_recall.reporting import to_csv, to_html, to_json, to_pdf
 from rusted_recall.storage import get_storage
 from rusted_recall.storage.base import ObjectNotFoundError
+from rusted_recall.web import judge as judge_vm
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -1021,6 +1022,164 @@ def recall_status(recall_id: str, rr_session: str | None = Cookie(default=None))
                 for j in jobs
             ],
         })
+
+
+# --- Judge Experience (spec Phase 2) -------------------------------------
+#
+# A thin presentation layer over the SAME services/engine. UI -> thin API
+# adapter -> existing Rusted Recall services -> existing DB/worker/provider/
+# storage. No domain logic lives here; see rusted_recall.web.judge.
+
+
+def _judge_recall(
+    session: Session, recall_id: str, rr_session: str | None
+) -> tuple[RecallEvent, Workspace]:
+    """Resolve + authorize a recall for the Judge Experience. Tenant isolation
+    is enforced exactly as the rest of the product (org-less demo is public;
+    org-scoped recalls only for that org)."""
+    recall = session.get(RecallEvent, recall_id)
+    if recall is None:
+        raise HTTPException(404, "recall not found")
+    ws = session.get(Workspace, recall.workspace_id)
+    _authorize_workspace(ws, _current_org(session, _current_user(session, rr_session)))
+    assert ws is not None  # _authorize_workspace raises when ws is None
+    return recall, ws
+
+
+@app.get("/judge", response_model=None)
+def judge_home() -> Response:
+    """Judge entry point: seed the production-backed demo if needed and drop the
+    visitor into the golden recall's Judge Experience."""
+    demo_seed.ensure_seeded(get_settings())
+    rid = demo_seed.golden_recall_id(get_settings())
+    if not rid:
+        raise HTTPException(500, "demo recall unavailable")
+    return Response(status_code=303, headers={"Location": f"/judge/recalls/{rid}"})
+
+
+@app.get("/judge/recalls/{recall_id}", response_class=HTMLResponse, response_model=None)
+def judge_recall(
+    request: Request, recall_id: str, rr_session: str | None = Cookie(default=None)
+) -> HTMLResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        vm = judge_vm.build_view_model(session, recall)
+        ctx = {"request": request, "vm": vm}
+        return templates.TemplateResponse(request, "judge_recall.html", ctx)
+
+
+@app.get("/api/judge/recalls/{recall_id}", response_model=None)
+def judge_api_recall(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        return JSONResponse(judge_vm.build_view_model(session, recall))
+
+
+@app.get("/api/judge/recalls/{recall_id}/status", response_model=None)
+def judge_api_status(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        jobs = session.execute(
+            select(RepairJob).where(RepairJob.recall_event_id == recall_id)
+        ).scalars().all()
+        active = any(j.status in ("queued", "running") for j in jobs)
+        return JSONResponse({
+            "recall_status": recall.status,
+            "active": active,
+            "assets": judge_vm.build_view_model(session, recall)["assets"],
+            "timeline": judge_vm.build_view_model(session, recall)["timeline"],
+            "summary": judge_vm.build_view_model(session, recall)["summary"],
+        })
+
+
+@app.get("/api/judge/recalls/{recall_id}/assets/{asset_id}", response_model=None)
+def judge_api_asset(
+    recall_id: str, asset_id: str, rr_session: str | None = Cookie(default=None)
+) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        detail = judge_vm.asset_detail(session, recall, asset_id)
+        if detail is None:
+            raise HTTPException(404, "asset not in this recall")
+        return JSONResponse(detail)
+
+
+@app.post("/api/judge/recalls/{recall_id}/assets/{asset_id}/review", response_model=None)
+def judge_api_review(
+    recall_id: str,
+    asset_id: str,
+    decision: str = Form(...),
+    new_classification: str = Form(""),
+    reason: str = Form(""),
+    rr_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        services.record_review_decision(
+            session, recall, asset_id=asset_id, decision=decision,
+            new_classification=new_classification or None, reason=reason,
+        )
+        session.flush()
+        return JSONResponse(judge_vm.asset_detail(session, recall, asset_id) or {})
+
+
+@app.post("/api/judge/recalls/{recall_id}/repair", response_model=None)
+def judge_api_repair(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        wsid = recall.workspace_id
+    get_runner().enqueue(RepairTask(workspace_id=wsid, recall_id=recall_id))
+    return JSONResponse({"queued": True})
+
+
+@app.get("/api/judge/recalls/{recall_id}/evidence", response_model=None)
+def judge_api_evidence(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        return JSONResponse(judge_vm.evidence_bundle(session, recall))
+
+
+@app.get("/api/judge/recalls/{recall_id}/opportunities", response_model=None)
+def judge_api_opportunities(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        return JSONResponse({"opportunities": judge_vm.opportunities_view(session, recall.id)})
+
+
+@app.post("/api/judge/recalls/{recall_id}/opportunities/discover", response_model=None)
+def judge_api_discover(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    st = get_settings()
+    storage = get_storage(st)
+    with session_scope() as session:
+        recall, ws = _judge_recall(session, recall_id, rr_session)
+        services.discover_opportunities(session, storage, ws, recall)
+        session.flush()
+        return JSONResponse({"opportunities": judge_vm.opportunities_view(session, recall.id)})
+
+
+@app.post("/api/judge/recalls/{recall_id}/opportunities/{opportunity_id}/execute", response_model=None)
+def judge_api_execute_opportunity(
+    recall_id: str, opportunity_id: str, rr_session: str | None = Cookie(default=None)
+) -> JSONResponse:
+    st = get_settings()
+    storage = get_storage(st)
+    with session_scope() as session:
+        recall, ws = _judge_recall(session, recall_id, rr_session)
+        opportunity = session.get(Opportunity, opportunity_id)
+        if opportunity is None or opportunity.recall_event_id != recall_id:
+            raise HTTPException(404, "opportunity not found")
+        if opportunity.status != "verified":
+            raise HTTPException(409, "opportunity has no executable plan")
+        from rusted_recall.providers.factory import build_primary_provider
+        from rusted_recall.providers.genblaze import GenblazePipeline
+
+        pipeline = GenblazePipeline(primary=build_primary_provider(st), settings=st)
+        services.execute_opportunity(
+            session, storage, ws, opportunity, pipeline,
+            provider_name="gmicloud", model=st.gmicloud_model,
+        )
+        session.flush()
+        return JSONResponse({"opportunities": judge_vm.opportunities_view(session, recall.id)})
 
 
 # --- reports --------------------------------------------------------------

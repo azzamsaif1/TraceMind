@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <title>Rusted Recall · Judge</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700;14..32,800;14..32,900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/css/judge-recall.css" />
+</head>
+<body>
+
+    <!-- Real persisted state injected server-side. No demo/hard-coded data. -->
+    <script id="judge-data" type="application/json">{{ vm | tojson }}</script>
+
+    <!-- DOT GRID BACKGROUND -->
+    <div class="dot-grid" id="dotGrid"></div>
+
+    <!-- PARTICLES BACKGROUND -->
+    <div class="particles" id="particles"></div>
+
+    <!-- IMPACT GAUGE -->
+    <div class="impact-gauge" id="impactGauge">
+        <svg viewBox="0 0 60 60">
+            <circle class="bg" cx="30" cy="30" r="25" />
+            <circle class="progress" id="gaugeProgress" cx="30" cy="30" r="25" />
+        </svg>
+        <div class="label">
+            <span id="gaugeValue">0</span><span class="sub">impact</span>
+        </div>
+    </div>
+
+    <!-- LIVE STATS DISPLAY -->
+    <div class="live-stats" id="liveStats">
+        <div class="stat-row"><span>Affected</span><span class="value" id="statAffected">0</span></div>
+        <div class="stat-row"><span>Repaired</span><span class="value green" id="statRepaired">0</span></div>
+        <div class="stat-row"><span>Ops avoided</span><span class="value highlight" id="statSaved">0</span></div>
+        <div class="stat-row"><span>Opportunities</span><span class="value" id="statOpps">0</span></div>
+    </div>
+
+    <!-- DRAWER -->
+    <div class="drawer" id="drawer">
+        <button class="close-btn" id="closeDrawer">✕</button>
+        <h3 id="drawerTitle">Asset Details</h3>
+        <div class="j-preview" id="drawerPreview" style="display:none;">
+            <figure><figcaption>Before</figcaption><img id="dBefore" alt="before" /></figure>
+            <figure><figcaption>After</figcaption><img id="dAfter" alt="after" /></figure>
+        </div>
+        <div class="grid" id="drawerGrid">
+            <div class="item"><div class="label">Classification</div><div class="value" id="dClass">—</div></div>
+            <div class="item"><div class="label">Impact score</div><div class="value" id="dImpact">—</div></div>
+            <div class="item"><div class="label">Dependency Path</div><div class="value" id="dPath">—</div></div>
+            <div class="item"><div class="label">Repair Method</div><div class="value" id="dMethod">—</div></div>
+            <div class="item"><div class="label">Job Status</div><div class="value" id="dStatus">—</div></div>
+            <div class="item"><div class="label">Error Category</div><div class="value" id="dError">—</div></div>
+            <div class="item"><div class="label">B2 Key</div><div class="value"><span class="mono" id="dB2">—</span></div></div>
+            <div class="item"><div class="label">Versions</div><div class="value" id="dVersions">—</div></div>
+            <div class="item"><div class="label">SHA-256</div><div class="value"><span class="mono" id="dEvidence">—</span></div></div>
+        </div>
+        <div class="j-causal" id="dCausalWrap" style="display:none;">
+            <div class="label">Causal reason</div>
+            <div class="value" id="dCausal">—</div>
+        </div>
+        <div class="j-review-actions" id="reviewActions" style="display:none;">
+            <button class="btn btn-success" data-decision="approve">Approve</button>
+            <button class="btn btn-secondary" data-decision="exclude">Exclude</button>
+            <button class="btn btn-blue" data-decision="mark_safe">Mark safe</button>
+        </div>
+    </div>
+
+    <!-- MAIN FRAME -->
+    <div class="frame" id="app">
+
+        <!-- ORBITAL 3D PARTICLES -->
+        <div class="orbital-particles" id="orbitalParticles"></div>
+
+        <!-- HEADER -->
+        <header class="header">
+            <div class="brand">
+                <h1>Rusted Recall</h1>
+                <span class="tag">Living Brand Intelligence</span>
+            </div>
+            <div class="status-group">
+                <div class="status-pill">
+                    <span class="dot" id="statusDot"></span>
+                    <span id="statusLabel">Ready</span>
+                </div>
+                <span class="recall-id" id="recallId">—</span>
+                <div class="bpm" title="Live engine heartbeat">
+                    <span class="heart">♥</span>
+                    <span class="value" id="bpmValue">LIVE</span>
+                </div>
+                <div class="j-nav">
+                    <a class="j-fullprod" href="/app" target="_blank" rel="noopener">Explore Full Product ↗</a>
+                    <a class="j-subev" href="/submission-evidence" target="_blank" rel="noopener">Submission Evidence</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div>
+                <div class="section-label">
+                    Workspace
+                    <span class="pulse-line"></span>
+                </div>
+                <div class="card">
+                    <div class="label">Recall</div>
+                    <div class="value" id="recallName">—</div>
+                </div>
+                <div class="card" style="margin-top:12px;">
+                    <div class="label">Status</div>
+                    <div class="value">
+                        <span class="status-badge idle" id="statusBadge">—</span>
+                    </div>
+                </div>
+            </div>
+            <div class="current-op">
+                <div class="label">Current Operation</div>
+                <div class="value" id="currentOp">
+                    —
+                    <span class="cursor-blink"></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- CENTER -->
+        <main class="center" id="center">
+            <div class="center-stage" id="stage">
+
+                <div class="ambient-core" id="ambientCore"></div>
+                <div class="source-ring" id="ring1"></div>
+                <div class="source-ring" id="ring2"></div>
+                <div class="shockwave-layer" id="shockwaveLayer"></div>
+                <div class="reverse-wave" id="reverseWave"></div>
+
+                <!-- Source of Truth -->
+                <div class="source-core" id="sourceCore">
+                    <div class="label" id="sourceLabel">Source of Truth</div>
+                    <div class="claim" id="currentClaim">—</div>
+                    <div class="changed" id="changedWrap">Changed from <del id="previousClaim">—</del></div>
+                </div>
+
+                <div class="orbit" id="orbit"></div>
+                <svg class="dep-path" id="depPath"></svg>
+                <div id="ghostLayer"></div>
+
+                <!-- Triumph -->
+                <div class="triumph" id="triumph">
+                    <div class="icon">✅</div>
+                    <h2 id="triumphTitle">Brand Consistency Restored</h2>
+                    <div class="stats">
+                        <div class="stat"><div class="num" id="tAssets">0</div><div class="desc">Analysed</div></div>
+                        <div class="stat"><div class="num" id="tAffected">0</div><div class="desc">Affected</div></div>
+                        <div class="stat"><div class="num" id="tRepaired">0</div><div class="desc">Repaired</div></div>
+                        <div class="stat"><div class="num" id="tReview">0</div><div class="desc">Review</div></div>
+                        <div class="stat"><div class="num" id="tSaved">0</div><div class="desc">Ops avoided</div></div>
+                        <div class="stat"><div class="num" id="tOpps">0</div><div class="desc">Opportunities</div></div>
+                    </div>
+                    <div class="verdict" id="triumphVerdict">—</div>
+                    <button class="btn btn-blue" style="margin-top:12px;" id="btnTriumphEvidence">Open Technical Evidence</button>
+                </div>
+
+            </div>
+        </main>
+
+        <!-- DETAILS -->
+        <aside class="details">
+            <div>
+                <div class="section-label">
+                    Live Timeline
+                    <span class="pulse-line"></span>
+                </div>
+                <ul class="timeline" id="timeline"></ul>
+            </div>
+            <div class="j-opps" id="oppSection" style="margin-top:16px;">
+                <div class="section-label">
+                    Verified Opportunities
+                    <span class="pulse-line"></span>
+                </div>
+                <div id="oppList" class="j-opp-list"></div>
+            </div>
+            <div style="margin-top:auto;">
+                <div class="section-label">
+                    Evidence
+                    <span class="pulse-line"></span>
+                </div>
+                <div class="evidence-link" id="btnEvidenceLink">
+                    <span>View Evidence Details</span>
+                    <span class="arrow">→</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- FOOTER -->
+        <footer class="footer">
+            <div class="timeline-control">
+                <span class="label">⏱ <span id="timerDisplay">0:00</span></span>
+                <div class="track" id="progressTrack">
+                    <div class="fill" id="progressFill" style="width:20%;"></div>
+                    <div class="milestones" id="milestones"></div>
+                    <div class="progress-dots" id="progressDots"></div>
+                </div>
+                <span class="status-label" id="timeStatus">Ready</span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-primary" id="btnPrimary">—</button>
+                <button class="btn btn-blue" id="btnEvidence">Evidence</button>
+                <button class="btn btn-secondary" id="btnReplay">↺ Replay</button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Evidence modal -->
+    <div class="j-modal" id="evidenceModal" style="display:none;">
+        <div class="j-modal-card">
+            <button class="close-btn" id="closeEvidence">✕</button>
+            <h3>Evidence</h3>
+            <div id="evidenceBody"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/judge-recall.js"></script>
+</body>
+</html>
