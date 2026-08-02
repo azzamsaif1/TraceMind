@@ -43,7 +43,19 @@
           {% for a in assets %}<option value="{{ a.asset.id }}">{{ a.asset.name }}</option>{% endfor %}
         </select>
       </div>
+      <div style="flex:1;min-width:200px;">
+        <label for="a-derivation">Derivation method (if derived)</label>
+        <select id="a-derivation" name="derivation_method">
+          <option value="">— other / generative —</option>
+          <option value="crop">crop (deterministic rebuild)</option>
+          <option value="resize">resize (deterministic rebuild)</option>
+        </select>
+      </div>
     </div>
+    <p class="muted" style="font-size:12px;margin:6px 0 0">
+      Deterministic derivations (crop / resize) let Rusted rebuild the child from
+      its repaired parent <strong>natively</strong> — no generative provider call.
+    </p>
     <label for="a-text">On-image text (optional — used if OCR is unavailable)</label>
     <input id="a-text" name="on_image_text" placeholder="Any claim/wording printed on the asset" />
     <div style="margin-top:14px;"><button class="btn" type="submit">Register asset</button></div>

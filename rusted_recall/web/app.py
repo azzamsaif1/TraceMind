@@ -674,6 +674,7 @@ async def create_asset(
     publication_status: str = Form("published"),
     declared_source_item_id: str = Form(""),
     parent_asset_id: str = Form(""),
+    derivation_method: str = Form(""),
     on_image_text: str = Form(""),
     rr_session: str | None = Cookie(default=None),
 ) -> Response:
@@ -700,7 +701,9 @@ async def create_asset(
                 publication_status=publication_status.strip() or "published",
                 declared_source_item_id=declared,
                 parent_asset_id=parent,
-                derivation_method="derived" if parent else None,
+                derivation_method=(
+                    (derivation_method.strip() or "derived") if parent else None
+                ),
                 on_image_text=on_image_text.strip(),
             )
         except services.ValidationError as exc:

@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -471,12 +472,20 @@ class Opportunity(Base):
     """
 
     __tablename__ = "opportunities"
+    __table_args__ = (
+        # Deterministic identity: the same verified inputs must never create a
+        # duplicate opportunity, even across worker restarts or repeated clicks.
+        UniqueConstraint("recall_event_id", "dedup_key", name="uq_opportunity_dedup"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
     recall_event_id: Mapped[str] = mapped_column(
         ForeignKey("recall_events.id"), index=True
     )
+    # Stable identity derived from (workspace, recall, source transition, kind,
+    # target asset, normalized parameters). Enforces idempotent discovery.
+    dedup_key: Mapped[str] = mapped_column(String(64), default="", index=True)
     kind: Mapped[str] = mapped_column(String(60))
     # candidate | verified | blocked | rejected | executed
     status: Mapped[str] = mapped_column(String(20), default="candidate", index=True)

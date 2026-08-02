@@ -12,7 +12,35 @@ This report is written **after** executable verification. Capabilities that
 cannot be proven now are marked **BLOCKED** with the exact owner action — none
 are inflated to "done".
 
-## What was implemented in this delivery (continuation)
+## Verified Opportunity, preflight, UX (PR #11, merged & deployed)
+- **Verified Opportunity lifecycle** (spec §3) — machine-grounded, not LLM
+  brainstorming. Each candidate passes `causal proof → constraint → feasibility
+  → counterfactual → VERIFIED` over persisted state before it is surfaced.
+  Rejection is truthful and specific (`no_causal_evidence`, `valid_before_change`);
+  no executable path ⇒ `BLOCKED` (never fake success). `models.Opportunity` +
+  migration `3c8e2f5a9b21` (verified on Postgres up/down/up).
+  `services.discover_opportunities` (idempotent NO_OP re-scan) +
+  `services.execute_opportunity` run through the SAME real engine: native ops
+  stay native (zero provider calls, real immutable `AssetVersion`, B2
+  write→read-back→SHA verify, manifest/provenance/validation, audit); generative
+  ops route through the pipeline only when a provider is usable; partial results
+  reported honestly. Web routes `POST /recalls/{id}/opportunities` +
+  `POST /opportunities/{id}/execute`; UI in `recall_detail.html`.
+- **Provider capability / preflight routing** (spec §2) —
+  `providers/preflight.py` answers “can we generate now, and if not exactly why”
+  with NO paid call. Typed states (`usable`, `insufficient_credits`,
+  `authentication_failure`, `unsupported_model`, …) map 1:1 to the repair error
+  taxonomy; surfaced on `/diagnostics` (live on the deployed site).
+- **Product UX + contextual guidance** (spec §4) — every action has
+  hover/focus/active/disabled/loading states + duplicate-submit prevention;
+  `guidance.py` + Guide panel derive the next step from actual workspace state.
+- **Native deterministic derivation reachable publicly** — the asset form now
+  exposes a `derivation_method` selector (crop / resize) so a company can, with
+  no source edit or SQL, declare a deterministic derivative that Rusted rebuilds
+  from its repaired parent **natively (zero provider calls)** — both in normal
+  repair and in Verified Opportunity execution.
+
+## What was implemented in earlier delivery (continuation)
 - **Durable, restart-safe repair queue + separate worker.** New
   `repair_queue_items` table + migration `2b7c9d1e4f10`; `rusted_recall/worker.py`
   (durable enqueue with de-dup, atomic claim via `SELECT ... FOR UPDATE SKIP
@@ -37,10 +65,13 @@ was **preserved, not rewritten**.
 
 ## What was actually tested — exact results
 ```
-ruff check rusted_recall tests scripts     → All checks passed
-mypy rusted_recall                          → Success: no issues found in 39 source files
-pytest (sqlite, local storage, no keys)     → 146 passed, 2 skipped
-alembic upgrade head on Postgres 16         → initial → 15fabd319801 → 2b7c9d1e4f10 OK (down/up re-verified)
+ruff check rusted_recall tests              → All checks passed
+mypy rusted_recall                          → Success: no issues found in 43 source files
+pytest (sqlite, local storage, no keys)     → 165 passed, 2 skipped
+alembic upgrade head on Postgres 16         → initial → 15fabd319801 → 2b7c9d1e4f10 → 3c8e2f5a9b21 OK (down/up re-verified)
+tests/test_opportunity.py                   → 8 passed (discover, execute+B2 proof, idempotent re-scan,
+                                               refuse blocked, causal + counterfactual rejection,
+                                               generative blocked vs verified)
 scripts/pg_claim_proof.py (real Postgres)   → items=5 successful_claims=5 unique=5 threads=10 → PASS
 scripts/b2_proof.py (real B2 bucket)        → evidence/B2_PROOF.json result: PASS
 scripts/benchmark.py                        → evidence/BENCHMARK_RESULTS.json
@@ -48,10 +79,14 @@ scripts/benchmark.py                        → evidence/BENCHMARK_RESULTS.json
 Full capability matrix with per-test citations: `evidence/HACKATHON_MATRIX.md`.
 
 ## What is deployed
-- Public HTTPS web + managed Postgres + B2 are live on Render (previously
-  verified). The **code in this branch is not yet deployed** — merge the PR to
-  redeploy the web service. The dedicated worker service is defined in
-  `render.yaml` but **not yet applied** as a Render Blueprint.
+- Public HTTPS web + managed Postgres + B2 are live on Render. PR #11
+  (Verified Opportunity + preflight + UX) is **merged and deployed** — the
+  preflight capability row is live on `https://rusted-recall.onrender.com/diagnostics`
+  and the deploy runs `alembic upgrade head` (so `3c8e2f5a9b21` is applied
+  automatically). The dedicated worker service is defined in `render.yaml`
+  but **not yet applied** as a Render Blueprint (web drains inline today).
+- The `derivation_method` UI selector is in the follow-up branch and deploys on
+  merge of its PR.
 
 ## Worker configuration status
 - Code: **correct and tested** (durable persistence, atomic claim on real
