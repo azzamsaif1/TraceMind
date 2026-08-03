@@ -16,6 +16,8 @@ from rusted_recall import services
 from rusted_recall.config import Settings, get_settings
 from rusted_recall.db import create_all, session_scope
 from rusted_recall.models import Asset
+from rusted_recall.providers.factory import build_primary_provider
+from rusted_recall.providers.genblaze import GenblazePipeline
 from rusted_recall.storage import get_storage
 
 OLD_CLAIM = "24-Hour Vitality"
@@ -158,6 +160,20 @@ def seed(settings: Settings | None = None) -> dict:
             severity="high", markets=["US"],
         )
         services.run_impact_analysis(session, ws, recall)
+
+        # Execute the directly-affected master's repair through the SAME
+        # production path the web app uses, so a clean deployment already shows
+        # a real Before/After version, repaired counter, and repair evidence for
+        # anonymous judges. The master's plan method is the native text-overlay
+        # (deterministic) operation — zero external provider calls.
+        pipeline = GenblazePipeline(
+            primary=build_primary_provider(settings), settings=settings
+        )
+        services.approve_and_repair(
+            session, storage, ws, recall, pipeline,
+            provider_name="gmicloud", model=settings.gmicloud_model,
+            asset_ids=[master.id],
+        )
         return {
             "status": "seeded",
             "workspace": ws.slug,
