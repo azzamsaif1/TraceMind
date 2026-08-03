@@ -41,6 +41,7 @@ from rusted_recall.models import (
     RecallEvent,
     RecallImpact,
     RepairJob,
+    RepairQueueItem,
     SourceOfTruthItem,
     SourceOfTruthVersion,
     User,
@@ -1082,7 +1083,22 @@ def judge_api_status(recall_id: str, rr_session: str | None = Cookie(default=Non
         jobs = session.execute(
             select(RepairJob).where(RepairJob.recall_event_id == recall_id)
         ).scalars().all()
-        active = any(j.status in ("queued", "running") for j in jobs)
+        # Repair is enqueued as a durable RepairQueueItem and drained
+        # asynchronously; the RepairJob rows only appear once the worker claims
+        # it. Pending/claimed queue items are therefore in-flight work too, so
+        # "active" must reflect them or a poller can see "not active" before the
+        # worker has even started.
+        pending = session.execute(
+            select(func.count())
+            .select_from(RepairQueueItem)
+            .where(
+                RepairQueueItem.recall_event_id == recall_id,
+                RepairQueueItem.status.in_(worker.ACTIVE),
+            )
+        ).scalar_one()
+        active = pending > 0 or any(
+            j.status in ("queued", "running") for j in jobs
+        )
         return JSONResponse({
             "recall_status": recall.status,
             "active": active,
@@ -1154,7 +1170,10 @@ def judge_api_discover(recall_id: str, rr_session: str | None = Cookie(default=N
         recall, ws = _judge_recall(session, recall_id, rr_session)
         services.discover_opportunities(session, storage, ws, recall)
         session.flush()
-        return JSONResponse({"opportunities": judge_vm.opportunities_view(session, recall.id)})
+        return JSONResponse({
+            "opportunities": judge_vm.opportunities_view(session, recall.id),
+            "discovery": judge_vm.discovery_summary(session, recall.id),
+        })
 
 
 @app.post("/api/judge/recalls/{recall_id}/opportunities/{opportunity_id}/execute", response_model=None)

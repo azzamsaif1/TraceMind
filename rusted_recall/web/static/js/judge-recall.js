@@ -248,8 +248,11 @@
         $('statRepaired').textContent = s.repaired != null ? s.repaired : 0;
         $('statSaved').textContent = s.operations_avoided != null ? s.operations_avoided : 0;
         $('statOpps').textContent = s.verified_opportunities != null ? s.verified_opportunities : 0;
-        const total = data.assets.length || 1;
-        updateGauge(((s.affected || 0) / total) * 100);
+        // Impact = the engine's strongest persisted impact score (spec 13),
+        // NOT an asset ratio and NOT the opportunity count. Stable across repair.
+        updateGauge(s.impact_percent != null ? s.impact_percent : 0);
+        const band = $('gaugeBand');
+        if (band) band.textContent = s.impact_band && s.impact_band !== 'None' ? s.impact_band : '';
     }
 
     // ---- timeline ----
@@ -274,6 +277,12 @@
             eventSpan.textContent = item.event || '';
 
             li.append(dot, time, eventSpan);
+            if (item.detail) {
+                const det = document.createElement('span');
+                det.className = 'event-detail';
+                det.textContent = item.detail;
+                li.appendChild(det);
+            }
             timelineEl.appendChild(li);
         });
     }
@@ -394,56 +403,98 @@
     }
 
     // ---- opportunities ----
+    function oppMetaRow(label, value) {
+        const row = document.createElement('div');
+        row.className = 'j-opp-meta';
+        const k = document.createElement('span'); k.className = 'k'; k.textContent = label;
+        const v = document.createElement('span'); v.className = 'v'; v.textContent = value;
+        row.append(k, v);
+        return row;
+    }
+
+    function renderDiscoverySummary(list) {
+        // Truthful discovery outcome (spec 6/23): evaluated / verified / rejected
+        // + rejection reasons, sourced from persisted audit evidence.
+        const d = data.discovery;
+        if (!d) return;
+        const box = document.createElement('div');
+        box.className = 'j-discovery';
+        const head = document.createElement('div');
+        head.className = 'j-discovery-head';
+        head.textContent = `Discovery complete · ${d.evaluated} evaluated · ${d.verified} verified · ${d.rejected} rejected`;
+        box.appendChild(head);
+        (d.rejections || []).forEach((r) => {
+            const row = document.createElement('div');
+            row.className = 'j-opp-sub';
+            row.textContent = `Rejected: ${r.asset || 'candidate'} — ${(r.reason || 'not eligible').replace(/_/g, ' ')}`;
+            box.appendChild(row);
+        });
+        list.appendChild(box);
+    }
+
     function renderOpportunities() {
         const list = $('oppList');
         list.replaceChildren();
-        const opps = data.opportunities || [];
+        renderDiscoverySummary(list);
+        const opps = (data.opportunities || []).filter((o) => o.status !== 'rejected');
         if (!opps.length) {
             const empty = document.createElement('div');
             empty.className = 'j-empty';
-            empty.textContent = 'No verified opportunities yet.' +
-                (data.status === 'completed' ? ' Use “Discover Verified Opportunities”.' : '');
+            empty.textContent = data.discovery
+                ? 'No verified opportunities — every candidate was rejected with a recorded reason.'
+                : 'No verified opportunities yet.' +
+                  (data.status === 'completed' ? ' Use “Discover Verified Opportunities”.' : '');
             list.appendChild(empty);
             return;
         }
         opps.forEach((o) => {
-            if (o.status === 'rejected') return;
             const div = document.createElement('div');
             div.className = 'j-opp';
 
             const title = document.createElement('div');
             title.className = 'j-opp-title';
-            title.textContent = o.title || o.kind || 'Opportunity';
-            div.appendChild(title);
-
-            const rationale = document.createElement('div');
-            rationale.className = 'j-opp-sub';
-            rationale.textContent = o.rationale || '';
-            div.appendChild(rationale);
-
-            const why = o.why_enabled || (o.counterfactual ? 'Not valid before the verified change.' : '');
-            if (why) {
-                const whyDiv = document.createElement('div');
-                whyDiv.className = 'j-opp-sub';
-                whyDiv.textContent = why;
-                div.appendChild(whyDiv);
-            }
-
+            title.textContent = o.title || o.kind_label || o.kind || 'Opportunity';
             const statusSpan = document.createElement('span');
             statusSpan.className = 'j-opp-status ' + (o.status || '');
-            statusSpan.textContent = o.status || '';
-            div.appendChild(statusSpan);
+            statusSpan.textContent = o.status_label || o.status || '';
+            title.appendChild(statusSpan);
+            div.appendChild(title);
+
+            if (o.rationale) {
+                const rationale = document.createElement('div');
+                rationale.className = 'j-opp-sub';
+                rationale.textContent = o.rationale;
+                div.appendChild(rationale);
+            }
+
+            if (o.kind_label) div.appendChild(oppMetaRow('Kind', o.kind_label));
+            if (o.target_name) div.appendChild(oppMetaRow('Target', o.target_name));
+            if (o.parent_name) div.appendChild(oppMetaRow('Repaired parent', o.parent_name));
+            if (o.causal_path_names && o.causal_path_names.length) {
+                div.appendChild(oppMetaRow('Causal path', o.causal_path_names.join(' → ')));
+            }
+            if (o.counterfactual) {
+                div.appendChild(oppMetaRow('Counterfactual',
+                    o.counterfactual.already_valid_before ? 'Was already valid' : 'Not valid before the change'));
+            }
+            if (o.feasibility_state) div.appendChild(oppMetaRow('Feasibility', o.feasibility_state));
+            div.appendChild(oppMetaRow('Operations',
+                `${o.native_operations || 0} native · ${o.generative_operations || 0} generative · ${o.blocked_operations || 0} blocked`));
+            if (o.dedup_ref) div.appendChild(oppMetaRow('Ref', o.dedup_ref));
 
             if (o.executable) {
                 const b = document.createElement('button');
                 b.className = 'btn btn-success';
-                b.textContent = 'Execute';
+                b.textContent = 'Execute Opportunity';
                 b.addEventListener('click', () => executeOpportunity(o.id, b));
                 div.appendChild(b);
             } else if (o.result) {
                 const r = document.createElement('div');
                 r.className = 'j-opp-sub';
-                r.textContent = `Result: ${o.result.executed || 0} executed, ${o.result.blocked || 0} blocked.`;
+                const ok = (o.result.blocked || 0) === 0 && (o.result.executed || 0) === (o.result.total || 0);
+                r.textContent = ok
+                    ? `Executed: ${o.result.executed || 0}/${o.result.total || 0} operations, 0 blocked.`
+                    : `Incomplete: ${o.result.executed || 0}/${o.result.total || 0} executed, ${o.result.blocked || 0} blocked.`;
                 div.appendChild(r);
             }
             list.appendChild(div);
@@ -459,25 +510,43 @@
         } catch (e) { /* fall back to cached row */ }
         if (!a) return;
         $('drawerTitle').textContent = `${a.icon} ${a.name}`;
-        $('dClass').textContent = a.classification || '—';
-        $('dImpact').textContent = a.impact_score != null ? a.impact_score : '—';
-        $('dPath').textContent = (a.dependency_path && a.dependency_path.length) ? a.dependency_path.join(' → ') : '—';
-        $('dMethod').textContent = a.derivation_method ? a.derivation_method : (a.repair_requirement || '—');
-        $('dStatus').textContent = a.job_status || '—';
-        $('dError').textContent = a.error_category || '—';
-        $('dB2').textContent = a.b2_key ? shorten(a.b2_key) : '—';
-        $('dVersions').textContent = a.versions || '—';
-        $('dEvidence').textContent = a.sha256 ? a.sha256.slice(0, 12) + '…' : '—';
+        $('dClass').textContent = a.classification_label || a.classification || '—';
+        $('dImpact').textContent = a.impact_percent != null
+            ? `${a.impact_percent}%${a.impact_band && a.impact_band !== 'None' ? ' · ' + a.impact_band : ''}`
+            : 'Not applicable';
+        // Human-readable dependency chain, with the raw graph tokens available.
+        const pathNames = (a.dependency_path_names && a.dependency_path_names.length)
+            ? a.dependency_path_names : a.dependency_path;
+        $('dPath').textContent = (pathNames && pathNames.length) ? pathNames.join(' → ') : 'No upstream dependency';
+        $('dMethod').textContent = a.repair_method_label || a.derivation_method || a.repair_requirement || 'Not applicable';
+        $('dStatus').textContent = a.job_status_label || 'No action required';
+        $('dError').textContent = a.error_category || (a.job_status === 'completed' ? 'No error' : 'Not applicable');
+        $('dB2').textContent = a.b2_key ? shorten(a.b2_key) : 'Not stored yet';
+        $('dVersions').textContent = a.versions || 'No repaired version';
+        $('dEvidence').textContent = a.sha256 ? a.sha256.slice(0, 12) + '…' : 'Not applicable';
         const cw = $('dCausalWrap');
         if (a.causal_reason) { cw.style.display = ''; $('dCausal').textContent = a.causal_reason; }
         else cw.style.display = 'none';
-        // before/after
+        // before/after: only a real repaired version is shown as "after"; other
+        // states get an honest caption instead of a misleading image (spec 18).
         const pv = $('drawerPreview');
-        if (a.before_url || a.after_url) {
+        const cap = $('previewCaption');
+        if (a.preview_state === 'repaired' && (a.before_url || a.after_url)) {
             pv.style.display = 'flex';
             toggleImg($('dBefore'), a.before_url);
             toggleImg($('dAfter'), a.after_url);
-        } else pv.style.display = 'none';
+            cap.style.display = 'none';
+        } else {
+            pv.style.display = 'none';
+            const msg = {
+                safe: 'No visual repair was required — this asset is verified safe.',
+                pending_review: 'Awaiting a review decision — no repaired version exists yet.',
+                pending_repair: 'Affected — repair not yet executed, so no repaired version exists.',
+                none: 'No action required.',
+            }[a.preview_state] || (a.before_url ? '' : 'No visual comparison available.');
+            if (msg) { cap.style.display = ''; cap.textContent = msg; }
+            else { cap.style.display = 'none'; }
+        }
         // review actions only while a decision can still change the outcome
         const canReview = ['directly_affected', 'probably_affected', 'needs_review', 'requires_review'].includes(a.classification)
             && a.job_status !== 'completed';
@@ -525,16 +594,29 @@
     }
 
     // ---- opportunities discover/execute ----
+    let discovering = false;
     async function discover() {
+        if (discovering) return;  // prevent duplicate submission (spec 23)
+        discovering = true;
+        const btn = $('btnPrimary');
+        const prevLabel = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Discovering…'; }
         try {
             const res = await fetch(`${API}/opportunities/discover`, { method: 'POST' });
             const body = await res.json();
             data.opportunities = body.opportunities || [];
-        } catch (e) { /* noop */ }
+            data.discovery = body.discovery || data.discovery;
+        } catch (e) { /* keep honest; refresh reflects reality */ }
         await refreshState();
+        discovering = false;
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Discovery complete';
+        }
+        void prevLabel;
     }
     async function executeOpportunity(id, btn) {
-        if (btn) { btn.disabled = true; btn.textContent = 'Executing…'; }
+        if (btn) { if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Executing…'; }
         try {
             const res = await fetch(`${API}/opportunities/${encodeURIComponent(id)}/execute`, { method: 'POST' });
             const body = await res.json();
@@ -544,11 +626,30 @@
     }
 
     // ---- evidence modal ----
+    let evidenceOpen = false;
+    function closeEvidenceModal() {
+        $('evidenceModal').style.display = 'none';
+        evidenceOpen = false;
+    }
     async function openEvidence() {
+        if (evidenceOpen) return;  // single overlay only (spec 21)
+        evidenceOpen = true;
         let ev;
-        try { ev = await (await fetch(`${API}/evidence`)).json(); } catch (e) { return; }
-        const s = ev.summary || {};
         const body = $('evidenceBody');
+        try {
+            const res = await fetch(`${API}/evidence`);
+            if (!res.ok) throw new Error('http ' + res.status);
+            ev = await res.json();
+        } catch (e) {
+            body.replaceChildren();
+            const err = document.createElement('div');
+            err.className = 'j-empty';
+            err.textContent = 'Could not load evidence. Please try again.';
+            body.appendChild(err);
+            $('evidenceModal').style.display = 'flex';
+            return;
+        }
+        const s = ev.summary || {};
         body.replaceChildren();
 
         function createRow(key, value) {
@@ -608,7 +709,8 @@
 
         $('evidenceModal').style.display = 'flex';
     }
-    $('closeEvidence').addEventListener('click', () => { $('evidenceModal').style.display = 'none'; });
+    $('closeEvidence').addEventListener('click', closeEvidenceModal);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && evidenceOpen) closeEvidenceModal(); });
 
     // ---- shockwave / reverse wave (visualise real transitions) ----
     function triggerShockwave() {
@@ -639,10 +741,14 @@
 
     // ---- replay (visual only, NO backend mutation) ----
     async function replay() {
-        if (replaying) return;
+        if (replaying) return;  // no parallel replay (spec 22)
         replaying = true;
+        const rbtn = $('btnReplay');
+        const rlabel = rbtn ? rbtn.textContent : '';
+        if (rbtn) { rbtn.disabled = true; rbtn.textContent = 'Replaying…'; }
         triggerShockwave();
         // Re-illuminate nodes in impact order, then the timeline progressively.
+        // Uses ONLY recorded state — no repair/discovery/execute is triggered.
         const order = [...nodes].sort((a, b) => b.intensity - a.intensity);
         order.forEach((n, i) => setTimeout(() => {
             n.el.style.transition = 'box-shadow .4s ease';
@@ -656,6 +762,7 @@
         renderTimeline();
         if (data.status === 'completed') triggerReverseWave();
         replaying = false;
+        if (rbtn) { rbtn.disabled = false; rbtn.textContent = rlabel || 'Replay'; }
     }
 
     // ---- full state refresh ----
