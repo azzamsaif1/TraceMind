@@ -248,6 +248,10 @@
         $('statRepaired').textContent = s.repaired != null ? s.repaired : 0;
         $('statSaved').textContent = s.operations_avoided != null ? s.operations_avoided : 0;
         $('statOpps').textContent = s.verified_opportunities != null ? s.verified_opportunities : 0;
+        // Evidence Count / Replay Count come straight from the persisted audit
+        // log (directive: Impact Summary), so they survive refresh/reopen.
+        if ($('statEvidence')) $('statEvidence').textContent = s.evidence_count != null ? s.evidence_count : 0;
+        if ($('statReplays')) $('statReplays').textContent = s.replay_count != null ? s.replay_count : 0;
         // Impact = the engine's strongest persisted impact score (spec 13),
         // NOT an asset ratio and NOT the opportunity count. Stable across repair.
         updateGauge(s.impact_percent != null ? s.impact_percent : 0);
@@ -753,6 +757,12 @@
         const rbtn = $('btnReplay');
         const rlabel = rbtn ? rbtn.textContent : '';
         if (rbtn) { rbtn.disabled = true; rbtn.textContent = 'Replaying…'; }
+        // Record the replay in the audit log (visual-only: no repair/discovery/
+        // execute) so Replay Count is real and survives refresh/reopen.
+        try {
+            const res = await fetch(`${API}/replay`, { method: 'POST' });
+            if (res.ok) { const b = await res.json(); if (b.summary) { data.summary = b.summary; updateLiveStats(); } }
+        } catch (e) { /* keep honest; a later refresh reflects reality */ }
         triggerShockwave();
         // Re-illuminate nodes in impact order, then the timeline progressively.
         // Uses ONLY recorded state — no repair/discovery/execute is triggered.

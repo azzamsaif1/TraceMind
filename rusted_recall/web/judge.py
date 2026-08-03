@@ -112,6 +112,7 @@ _TIMELINE_LABELS: dict[str, str] = {
     "opportunity.execution.started": "Opportunity execution started",
     "opportunity.execution.completed": "Opportunity executed",
     "opportunity.execution.failed": "Opportunity execution incomplete",
+    "recall.replayed": "Replay viewed",
 }
 
 
@@ -539,6 +540,19 @@ def _summary(rows: list[dict], opportunities: list[dict], recall: RecallEvent) -
     }
 
 
+def _counts(session: Session, recall_id: str) -> tuple[int, int]:
+    """Engine-driven Evidence Count and Replay Count, both read straight from
+    the append-only audit log so they are identical after refresh/reopen and
+    can never be hard-coded. Evidence Count = every recorded audit event for
+    the recall; Replay Count = the persisted ``recall.replayed`` events."""
+    names = session.execute(
+        select(AuditEvent.event).where(AuditEvent.recall_event_id == recall_id)
+    ).scalars().all()
+    evidence_count = len(names)
+    replay_count = sum(1 for n in names if n == "recall.replayed")
+    return evidence_count, replay_count
+
+
 def build_view_model(session: Session, recall: RecallEvent) -> dict:
     item = session.get(SourceOfTruthItem, recall.source_item_id)
     old_v = session.get(SourceOfTruthVersion, recall.old_version_id)
@@ -557,6 +571,11 @@ def build_view_model(session: Session, recall: RecallEvent) -> dict:
     if primary["action"] == "discover" and recall.status not in ("completed", "partially_completed"):
         primary = {"label": "View verified result", "action": "none", "enabled": False}
 
+    summary = _summary(rows, opportunities, recall)
+    evidence_count, replay_count = _counts(session, recall.id)
+    summary["evidence_count"] = evidence_count
+    summary["replay_count"] = replay_count
+
     return {
         "recall_id": recall.id,
         "status": recall.status,
@@ -573,7 +592,7 @@ def build_view_model(session: Session, recall: RecallEvent) -> dict:
         "timeline": _timeline(session, recall.id),
         "opportunities": opportunities,
         "discovery": discovery_summary(session, recall.id),
-        "summary": _summary(rows, opportunities, recall),
+        "summary": summary,
     }
 
 
