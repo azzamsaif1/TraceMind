@@ -178,6 +178,9 @@
             orbit.appendChild(el);
             return { id: asset.id, el, x: pos.x, y: pos.y, intensity, status: asset.node_status };
         });
+        // Re-apply the current selection so a live refresh keeps the selected
+        // node highlighted and unrelated nodes faded (no reload).
+        if (selectedAssetId && nodes.some((n) => n.id === selectedAssetId)) highlightSelection(selectedAssetId);
     }
 
     function showGhost(id, show) {
@@ -224,10 +227,43 @@
         depPathSvg.classList.add('active');
     }
 
+    // Resolve the node ids on an asset's real dependency path (selected node
+    // included) so the graph can highlight the path and fade unrelated nodes.
+    function pathIdsFor(id) {
+        const asset = data.assets.find((a) => a.id === id);
+        const ids = new Set([id]);
+        const path = (asset && asset.dependency_path) || [];
+        path.forEach((entry) => {
+            const key = String(entry).replace(/^asset:/, '').replace(/^sot:.*/, 'source');
+            if (key === 'source') return;
+            const n = nodes.find((nn) => nn.id === key)
+                || nodes.find((nn) => { const a = data.assets.find((x) => x.id === nn.id); return a && a.name === entry; });
+            if (n) ids.add(n.id);
+        });
+        return ids;
+    }
+
+    function highlightSelection(id) {
+        const onPath = pathIdsFor(id);
+        nodes.forEach((n) => {
+            n.el.classList.toggle('selected', n.id === id);
+            n.el.classList.toggle('on-path', n.id !== id && onPath.has(n.id));
+            n.el.classList.toggle('faded', !onPath.has(n.id));
+        });
+    }
+
+    function clearSelection() {
+        selectedAssetId = null;
+        nodes.forEach((n) => n.el.classList.remove('selected', 'on-path', 'faded'));
+        ghosts.forEach((g) => g.el.classList.remove('visible'));
+        depPathSvg.classList.remove('active');
+    }
+
     function selectAsset(id) {
         selectedAssetId = id;
         drawDependencyPath(id);
         ghosts.forEach((g) => g.el.classList.toggle('visible', g.id === id));
+        highlightSelection(id);
     }
 
     // ---- gauge / stats ----
@@ -535,11 +571,19 @@
         // states get an honest caption instead of a misleading image (spec 18).
         const pv = $('drawerPreview');
         const cap = $('previewCaption');
+        $('dRepairedAt').textContent = a.repaired_at
+            ? new Date(a.repaired_at).toLocaleString()
+            : (a.preview_state === 'repaired' ? '—' : 'Not repaired');
         if (a.preview_state === 'repaired' && (a.before_url || a.after_url)) {
             pv.style.display = 'flex';
             toggleImg($('dBefore'), a.before_url);
             toggleImg($('dAfter'), a.after_url);
-            cap.style.display = 'none';
+            bindFullImage($('dBefore'), a.before_url);
+            bindFullImage($('dAfter'), a.after_url);
+            cap.style.display = '';
+            cap.textContent = a.b2_key
+                ? 'Stored & verified on B2 — click a thumbnail to open the full image.'
+                : 'Click a thumbnail to open the full image.';
         } else {
             pv.style.display = 'none';
             const msg = {
@@ -560,8 +604,15 @@
         drawer.classList.add('open');
     }
     function toggleImg(img, url) { if (url) { img.src = url; img.style.display = ''; } else { img.removeAttribute('src'); img.style.display = 'none'; } }
+    // Make a before/after thumbnail open the full stored image in a new tab.
+    function bindFullImage(img, url) {
+        if (!url) { img.onclick = null; img.style.cursor = ''; img.removeAttribute('title'); return; }
+        img.style.cursor = 'zoom-in';
+        img.title = 'Open full image';
+        img.onclick = () => window.open(url, '_blank', 'noopener');
+    }
 
-    $('closeDrawer').addEventListener('click', () => drawer.classList.remove('open'));
+    $('closeDrawer').addEventListener('click', () => { drawer.classList.remove('open'); clearSelection(); });
 
     async function submitReview(assetId, decision) {
         const fd = new FormData();
@@ -702,6 +753,36 @@
         group2.appendChild(createRow('Verification state', s.verification_state || '—'));
         body.appendChild(group2);
 
+        // Group 3: Audit log — every persisted event, newest first (directive
+        // "Audit panel"). Read verbatim from the append-only log; nothing here
+        // is invented and every row has a human label + result.
+        if (Array.isArray(ev.audit) && ev.audit.length) {
+            const g3 = document.createElement('div');
+            g3.className = 'j-ev-group';
+            const h4_3 = document.createElement('h4');
+            h4_3.textContent = 'Audit log · newest first';
+            g3.appendChild(h4_3);
+            const ul = document.createElement('ul');
+            ul.className = 'j-audit-list';
+            ev.audit.forEach((row) => {
+                const li = document.createElement('li');
+                li.className = 'j-audit-row r-' + (row.result || 'ok');
+                const t = document.createElement('span');
+                t.className = 'j-audit-time';
+                t.textContent = row.time || '';
+                const lab = document.createElement('span');
+                lab.className = 'j-audit-label';
+                lab.textContent = row.label + (row.object ? ' · ' + row.object : '');
+                const res = document.createElement('span');
+                res.className = 'j-audit-result';
+                res.textContent = row.result || '';
+                li.append(t, lab, res);
+                ul.appendChild(li);
+            });
+            g3.appendChild(ul);
+            body.appendChild(g3);
+        }
+
         // Details: technical details
         const details = document.createElement('details');
         details.className = 'j-ev-details';
@@ -777,6 +858,10 @@
             await sleep(320);
         }
         renderTimeline();
+        // Reload the full persisted view so the graph, counters, timeline and
+        // evidence all reflect reality after replay (directive Phase 2). Replay
+        // stays visual-only: this is a read, it never mutates engine state.
+        await refreshState();
         if (data.status === 'completed') triggerReverseWave();
         replaying = false;
         if (rbtn) { rbtn.disabled = false; rbtn.textContent = rlabel || 'Replay'; }
@@ -828,8 +913,10 @@
     $('btnTriumphEvidence').addEventListener('click', openEvidence);
     document.addEventListener('click', (e) => {
         if (!drawer.contains(e.target) && !e.target.closest('.asset-node')) {
-            drawer.classList.remove('open');
-            if (!selectedAssetId) depPathSvg.classList.remove('active');
+            if (drawer.classList.contains('open') || selectedAssetId) {
+                drawer.classList.remove('open');
+                clearSelection();
+            }
         }
     });
     let resizeTimer;

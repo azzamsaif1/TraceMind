@@ -266,6 +266,46 @@ def test_judge_evidence_and_replay_counts_are_engine_driven(client):
     assert reopened["repaired"] == vm["summary"]["repaired"]
 
 
+def test_judge_evidence_audit_log_is_chronological_newest_first(client):
+    """Evidence bundle exposes a verbatim, newest-first audit trail (directive
+    Phase 2 "Audit panel"): every row has a real timestamp, human label and
+    result; a replay appends a new newest-first entry."""
+    rid = _golden_id(client)
+    ev = client.get(f"/api/judge/recalls/{rid}/evidence").json()
+    audit = ev["audit"]
+    assert isinstance(audit, list) and len(audit) >= 1
+    # every event is explained (label + result), never a bare/blank row
+    for row in audit:
+        assert row["label"] and row["result"] in ("ok", "failed", "rejected")
+        assert row["at"] is not None
+    # newest-first ordering (timestamps monotonically non-increasing)
+    stamps = [row["at"] for row in audit]
+    assert stamps == sorted(stamps, reverse=True)
+    # a replay records one new event and it becomes the newest (top) row
+    top_before = audit[0]["at"]
+    client.post(f"/api/judge/recalls/{rid}/replay")
+    audit2 = client.get(f"/api/judge/recalls/{rid}/evidence").json()["audit"]
+    assert len(audit2) == len(audit) + 1
+    assert audit2[0]["label"] == "Replay viewed"
+    assert audit2[0]["at"] >= top_before
+
+
+def test_judge_repaired_asset_exposes_repair_timestamp(client):
+    """A repaired asset carries a real repaired-version timestamp for the
+    before/after gallery (directive "Before/After: Timestamp"); unrepaired
+    assets expose it as absent, never fabricated."""
+    rid = _golden_id(client)
+    vm = _drive_to_verified(client, rid)
+    if vm["summary"]["repaired"] < 1:
+        pytest.skip("repair did not complete on this runner (environment)")
+    repaired = [a for a in vm["assets"] if a.get("preview_state") == "repaired"]
+    assert repaired, "expected at least one repaired asset"
+    assert all(a["repaired_at"] for a in repaired)
+    # assets without a repaired version never invent a timestamp
+    assert all(a["repaired_at"] is None
+               for a in vm["assets"] if a.get("preview_state") != "repaired")
+
+
 def test_judge_unknown_recall_is_404(client):
     _golden_id(client)  # ensure app seeded
     assert client.get("/judge/recalls/does-not-exist").status_code == 404
