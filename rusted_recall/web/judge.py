@@ -299,6 +299,9 @@ def _asset_row(session: Session, recall: RecallEvent, imp: RecallImpact) -> dict
                      else (f"v{up.version}" if up else None)),
         "b2_key": (rep.b2_key if rep else (up.b2_key if up else None)),
         "sha256": (rep.sha256 if rep else (up.sha256 if up else None)),
+        # Real repaired-version timestamp for the before/after gallery (spec
+        # "Before/After: Timestamp"). Absent until a repair actually ran.
+        "repaired_at": rep.created_at.isoformat() if rep and rep.created_at else None,
         "before_url": (f"/obj?key={up.b2_key}" if up and up.b2_key else None),
         "after_url": (f"/obj?key={rep.b2_key}" if rep and rep.b2_key else None),
         "dimensions": (f"{rep.width}×{rep.height}" if rep and rep.width
@@ -608,6 +611,43 @@ def asset_detail(session: Session, recall: RecallEvent, asset_id: str) -> dict |
     return _asset_row(session, recall, imp)
 
 
+def audit_log(session: Session, recall_id: str) -> list[dict]:
+    """Chronological audit trail (directive "Audit panel": newest first). Reads
+    every persisted AuditEvent verbatim — nothing invented, nothing collapsed —
+    and exposes timestamp, actor, a human action label and the affected object.
+    Result is derived from the event name so "no unexplained events" holds."""
+    events = session.execute(
+        select(AuditEvent)
+        .where(AuditEvent.recall_event_id == recall_id)
+        .order_by(AuditEvent.created_at.desc())
+    ).scalars().all()
+    out: list[dict] = []
+    for e in events:
+        detail = e.detail if isinstance(e.detail, dict) else {}
+        obj = None
+        if detail.get("asset_id"):
+            obj = _node_name(session, str(detail["asset_id"]))
+        elif detail.get("recall_id"):
+            obj = "Recall"
+        ev = e.event
+        if ev.endswith(".failed") or ev == "repair.failed":
+            result = "failed"
+        elif ev.endswith(".rejected") or ev.endswith(".blocked"):
+            result = "rejected"
+        else:
+            result = "ok"
+        out.append({
+            "at": e.created_at.isoformat() if e.created_at else None,
+            "time": _hhmm(e.created_at),
+            "actor": e.actor,
+            "event": ev,
+            "label": _TIMELINE_LABELS.get(ev, ev.replace(".", " ").replace("_", " ").capitalize()),
+            "object": obj,
+            "result": result,
+        })
+    return out
+
+
 def evidence_bundle(session: Session, recall: RecallEvent) -> dict:
     """Answers: what changed, why each asset mattered, what was repaired, what
     was avoided, what version was created, how it was verified, what remains."""
@@ -620,4 +660,5 @@ def evidence_bundle(session: Session, recall: RecallEvent) -> dict:
         "assets": vm["assets"],
         "opportunities": vm["opportunities"],
         "timeline": vm["timeline"],
+        "audit": audit_log(session, recall.id),
     }
