@@ -6,6 +6,7 @@ idempotent opportunity path that never duplicates rows.
 from __future__ import annotations
 
 import importlib
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,10 +132,13 @@ def _drive_to_verified(client: TestClient, rid: str) -> dict:
     client.post(f"/api/judge/recalls/{rid}/assets/{master['id']}/review",
                 data={"decision": "approve"})
     assert client.post(f"/api/judge/recalls/{rid}/repair").json()["queued"] is True
-    for _ in range(30):
+    # The durable queue is drained asynchronously by the inline worker thread;
+    # poll with a real delay so slower CI runners have time to complete the repair.
+    for _ in range(120):
         st = client.get(f"/api/judge/recalls/{rid}/status").json()
         if not st["active"]:
             break
+        time.sleep(0.25)
     return client.get(f"/api/judge/recalls/{rid}").json()
 
 
