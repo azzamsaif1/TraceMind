@@ -8,7 +8,7 @@
 |---|---|
 | **Live ** | _pending deployment — owner must authorise a public HTTPS host + managed PostgreSQL (https://rusted-recall.onrender.com)
 | **Judge Demo** | `https://rusted-recall.onrender.com/judge` — opens a production-backed recall with no account, setup or terminal |
-| **Demo Video** | _pending recording (owner)_ |
+| **Demo Video** | https://youtu.be/TrYPHfgxLWs
 
 When a product package, logo, marketing claim, price, licensed face, or
 licensed voice changes, Rusted Recall identifies every affected media asset,
