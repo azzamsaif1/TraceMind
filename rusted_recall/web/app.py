@@ -1154,7 +1154,10 @@ def judge_api_discover(recall_id: str, rr_session: str | None = Cookie(default=N
         recall, ws = _judge_recall(session, recall_id, rr_session)
         services.discover_opportunities(session, storage, ws, recall)
         session.flush()
-        return JSONResponse({"opportunities": judge_vm.opportunities_view(session, recall.id)})
+        return JSONResponse({
+            "opportunities": judge_vm.opportunities_view(session, recall.id),
+            "discovery": judge_vm.discovery_summary(session, recall.id),
+        })
 
 
 @app.post("/api/judge/recalls/{recall_id}/opportunities/{opportunity_id}/execute", response_model=None)

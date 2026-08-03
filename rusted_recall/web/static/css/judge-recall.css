@@ -1271,7 +1271,136 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    /* Panel itself never scrolls; the timeline and opportunity list scroll
+       independently so the Evidence link always stays visible (spec 15). */
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* Timeline block: bounded, independent scroll. */
+.details > div:first-child {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 40%;
+    overflow: hidden;
+}
+
+.details > div:first-child .timeline {
     overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding-right: 4px;
+}
+
+/* Opportunities block: bounded, independent scroll. */
+.details .j-opps {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 46%;
+    overflow: hidden;
+}
+
+.details .j-opps .j-opp-list {
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding-right: 4px;
+}
+
+/* Evidence link block always visible at the bottom. */
+.details > div:last-child {
+    flex: 0 0 auto;
+}
+
+/* Grouped-discovery detail line under a timeline entry. */
+.timeline li {
+    flex-wrap: wrap;
+}
+
+.timeline li .event-detail {
+    flex-basis: 100%;
+    margin-left: 18px;
+    font-size: 10.5px;
+    color: #64748b;
+}
+
+/* Impact band under the gauge. */
+.gauge-band {
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: #F97316;
+    margin-top: 2px;
+    min-height: 12px;
+}
+
+/* Opportunity proof rows. */
+.j-opp-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #94a3b8;
+}
+
+.j-opp-meta .k {
+    color: #64748b;
+    flex-shrink: 0;
+}
+
+.j-opp-meta .v {
+    color: #cbd5e1;
+    text-align: right;
+    word-break: break-word;
+}
+
+.j-opp .j-opp-status {
+    float: right;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(34, 197, 94, 0.12);
+    color: #4ade80;
+}
+
+.j-opp .j-opp-status.executed {
+    background: rgba(59, 130, 246, 0.12);
+    color: #60a5fa;
+}
+
+/* Discovery outcome summary (evaluated / verified / rejected + reasons). */
+.j-discovery {
+    border: 1px solid rgba(59, 130, 246, 0.16);
+    background: rgba(59, 130, 246, 0.05);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+
+.j-discovery .j-discovery-head {
+    font-size: 11px;
+    font-weight: 700;
+    color: #cbd5e1;
+    margin-bottom: 3px;
+}
+
+/* Honest caption when there is no real before/after to show. */
+.j-preview-note {
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 12px;
 }
 
 .details .section-label {

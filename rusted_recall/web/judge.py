@@ -92,10 +92,11 @@ PRIMARY_ACTION: dict[str, dict] = {
 # never invents a timeline entry (spec: timeline from persisted audit events).
 _TIMELINE_LABELS: dict[str, str] = {
     "recall.created": "Recall created",
-    "recall.analysed": "Dependency graph built",
+    "recall.analysed": "Impact analysis completed",
     "impact.classified": "Impact classified",
     "review.decision": "Review decision recorded",
     "repair.planned": "Minimal repair planned",
+    "repair.plan_created": "Minimal repair planned",
     "repair.queued": "Repair queued",
     "repair.started": "Repair started",
     "repair.completed": "Repair completed",
@@ -150,6 +151,75 @@ def _job(session: Session, recall_id: str, asset_id: str) -> RepairJob | None:
     ).scalars().first()
 
 
+# Human labels for repair methods (spec section 17 "Repair method").
+_METHOD_LABELS: dict[str, str] = {
+    "text_overlay": "Text overlay",
+    "deterministic_crop": "Deterministic crop",
+    "deterministic_resize": "Deterministic resize",
+    "crop": "Deterministic crop",
+    "resize": "Deterministic resize",
+    "generative_edit": "Generative edit",
+    "controlled_regeneration": "Controlled regeneration",
+    "manual_review": "Manual review",
+}
+
+# Classifications that count as "affected" (spec section 14). Kept independent
+# of the current node colour so completing a repair never erases the historical
+# impact (spec section 13 acceptance).
+_AFFECTED_CLASSES = frozenset({"directly_affected", "probably_affected", "needs_review", "requires_review"})
+_REVIEW_CLASSES = frozenset({"needs_review", "requires_review"})
+
+
+def _impact_band(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 0.55:
+        return "High"
+    if score >= 0.25:
+        return "Medium"
+    if score > 0:
+        return "Low"
+    return "None"
+
+
+def _node_name(session: Session, token: str) -> str | None:
+    """Resolve a graph node token (``asset:<id>`` / ``sot:<id>`` / bare id/name)
+    to a human-readable name. Returns None when it cannot be resolved."""
+    if not token:
+        return None
+    raw = str(token)
+    if raw.startswith("asset:"):
+        a = session.get(Asset, raw.split(":", 1)[1])
+        return a.name if a else None
+    if raw.startswith("sot:"):
+        it = session.get(SourceOfTruthItem, raw.split(":", 1)[1])
+        return it.name if it else None
+    a = session.get(Asset, raw)
+    if a is not None:
+        return a.name
+    return raw
+
+
+def _job_status_label(job: RepairJob | None, classification: str | None) -> str:
+    """Truthful, human job status — never a bare dash (spec section 17)."""
+    if job is not None:
+        return {
+            "completed": "Completed",
+            "failed": "Failed",
+            "queued": "Queued",
+            "running": "Repairing",
+            "requires_review": "Awaiting review",
+        }.get(job.status, job.status)
+    cls = (classification or "").lower()
+    if cls in ("safe", "unaffected"):
+        return "Verified safe"
+    if cls in _REVIEW_CLASSES:
+        return "Awaiting review decision"
+    if cls in _AFFECTED_CLASSES:
+        return "Awaiting review decision"
+    return "No action required"
+
+
 def _node_status(classification: str | None, job: RepairJob | None) -> str:
     """Truthful node colour: a finished/failed job wins over classification."""
     if job is not None:
@@ -172,19 +242,50 @@ def _asset_row(session: Session, recall: RecallEvent, imp: RecallImpact) -> dict
     parent = session.get(Asset, asset.parent_asset_id) if asset.parent_asset_id else None
     strongest = imp.strongest_path or {}
     dep_path = strongest.get("path") or strongest.get("nodes") or []
+    dep_path = dep_path if isinstance(dep_path, list) else []
+    # Human-readable dependency chain (spec section 19): resolve every graph
+    # node token to a real name, appending the derivation parent when the raw
+    # path is only source -> asset so the derivative lineage is visible.
+    dep_names: list[str] = []
+    for tok in dep_path:
+        nm = _node_name(session, str(tok))
+        if nm:
+            dep_names.append(nm)
+    if parent and parent.name and parent.name not in dep_names:
+        dep_names.insert(max(0, len(dep_names) - 1), parent.name)
+    # Before/After semantic state (spec section 18) — never present a missing
+    # repaired version as if a repair happened.
+    if rep is not None:
+        preview_state = "repaired"
+    elif (imp.classification or "").lower() in ("safe", "unaffected"):
+        preview_state = "safe"
+    elif (imp.classification or "").lower() in _REVIEW_CLASSES:
+        preview_state = "pending_review"
+    elif (imp.classification or "").lower() in _AFFECTED_CLASSES:
+        preview_state = "pending_repair"
+    else:
+        preview_state = "none"
+    method = asset.derivation_method or imp.repair_requirement
     return {
         "id": asset.id,
         "name": asset.name,
         "asset_type": asset.asset_type,
         "icon": _icon(asset),
         "classification": imp.classification,
+        "classification_label": (imp.classification or "").replace("_", " ").title() or None,
         "node_status": _node_status(imp.classification, job),
         "impact_score": round(imp.impact_score, 2) if imp.impact_score is not None else None,
+        "impact_percent": round(imp.impact_score * 100) if imp.impact_score is not None else None,
+        "impact_band": _impact_band(imp.impact_score),
         "evidence_score": round(imp.evidence_score, 2) if imp.evidence_score else None,
         # Confidence is NOT a persisted field -> honestly absent.
         "confidence": None,
         "causal_reason": imp.causal_explanation or imp.propagation_reason or None,
-        "dependency_path": dep_path if isinstance(dep_path, list) else [],
+        "dependency_path": dep_path,
+        "dependency_path_names": dep_names,
+        "job_status_label": _job_status_label(job, imp.classification),
+        "repair_method_label": (_METHOD_LABELS.get(method) if method else None),
+        "preview_state": preview_state,
         "score_components": imp.score_components or {},
         "reasons": imp.reasons or [],
         "repair_requirement": imp.repair_requirement or None,
@@ -204,20 +305,145 @@ def _asset_row(session: Session, recall: RecallEvent, imp: RecallImpact) -> dict
     }
 
 
+# Low-level opportunity events collapsed into one grouped timeline row (spec
+# section 16) — the raw events remain untouched in the audit log / evidence.
+_DISCOVERY_FAMILY = frozenset({
+    "opportunity.candidate.evaluated", "opportunity.verified",
+    "opportunity.blocked", "opportunity.rejected",
+})
+# recall.status transitions worth surfacing to a judge (the rest are implied).
+_STATUS_STAGE: dict[str, str] = {
+    "repairing": "Repair started",
+    "completed": "Recall verified",
+    "partially_completed": "Repair needs attention",
+    "failed": "Repair failed",
+    "blocked": "Provider capability blocked",
+}
+_DECISION_VERB = {"approve": "approved", "exclude": "excluded", "mark_safe": "marked safe"}
+
+
 def _timeline(session: Session, recall_id: str) -> list[dict]:
+    """Curated, judge-readable timeline over the raw audit log.
+
+    Repeated low-level opportunity-discovery events are summarised into a single
+    grouped row (candidates evaluated / verified / rejected). Review decisions
+    and repairs are rendered with real asset names. No raw AuditEvent record is
+    deleted — the evidence modal still exposes every event verbatim.
+    """
     events = session.execute(
         select(AuditEvent)
         .where(AuditEvent.recall_event_id == recall_id)
         .order_by(AuditEvent.created_at)
     ).scalars().all()
-    out = []
+
+    out: list[dict] = []
+    group: dict | None = None
+    seen_reviews: set[tuple[str, str]] = set()
+
+    def flush_group() -> None:
+        nonlocal group
+        if group is None:
+            return
+        detail = (f"{group['evaluated']} candidate"
+                  f"{'s' if group['evaluated'] != 1 else ''} evaluated · "
+                  f"{group['verified']} verified · {group['rejected']} rejected")
+        out.append({"time": group["time"], "event": "Opportunity discovery completed",
+                    "detail": detail, "raw": "opportunity.discovery"})
+        group = None
+
     for e in events:
-        label = _TIMELINE_LABELS.get(e.event)
-        if label is None:
-            # Unknown but real event: prettify its name, never drop or invent.
-            label = e.event.replace(".", " ").replace("_", " ").capitalize()
-        out.append({"time": _hhmm(e.created_at), "event": label, "raw": e.event})
+        ev = e.event
+        detail = e.detail if isinstance(e.detail, dict) else {}
+        if ev == "opportunity.discovery.started":
+            flush_group()
+            group = {"time": _hhmm(e.created_at), "evaluated": 0, "verified": 0,
+                     "blocked": 0, "rejected": 0}
+            continue
+        if ev in _DISCOVERY_FAMILY:
+            if group is None:
+                group = {"time": _hhmm(e.created_at), "evaluated": 0, "verified": 0,
+                         "blocked": 0, "rejected": 0}
+            if ev == "opportunity.candidate.evaluated":
+                group["evaluated"] += 1
+            elif ev == "opportunity.verified":
+                group["verified"] += 1
+            elif ev == "opportunity.blocked":
+                group["blocked"] += 1
+            elif ev == "opportunity.rejected":
+                group["rejected"] += 1
+            continue
+        flush_group()
+
+        label: str | None
+        if ev == "recall.status":
+            label = _STATUS_STAGE.get(detail.get("status", ""))
+            if label is None:
+                continue  # implied transition — omit noise
+        elif ev == "review.decision":
+            key = (detail.get("asset_id", ""), detail.get("decision", ""))
+            if key in seen_reviews:
+                continue  # same decision recorded twice by approve->repair path
+            seen_reviews.add(key)
+            nm = _node_name(session, detail.get("asset_id", "")) or "Asset"
+            verb = _DECISION_VERB.get(detail.get("decision", ""), detail.get("decision", "reviewed"))
+            label = f"{nm} {verb}"
+        elif ev in ("repair.completed", "repair.native"):
+            rnm = _node_name(session, detail.get("asset_id", ""))
+            label = f"{rnm} repaired" if rnm else _TIMELINE_LABELS.get(ev, "Repair completed")
+        elif ev == "repair.failed":
+            fnm = _node_name(session, detail.get("asset_id", ""))
+            label = f"{fnm} repair failed" if fnm else "Repair failed"
+        else:
+            label = _TIMELINE_LABELS.get(ev)
+            if label is None:
+                label = ev.replace(".", " ").replace("_", " ").capitalize()
+
+        row = {"time": _hhmm(e.created_at), "event": label, "raw": ev}
+        # Collapse consecutive identical labels (e.g. the review decision recorded
+        # twice by the approve->repair path).
+        if out and out[-1]["event"] == label and out[-1].get("raw") == ev:
+            continue
+        out.append(row)
+    flush_group()
     return out
+
+
+def discovery_summary(session: Session, recall_id: str) -> dict | None:
+    """The outcome of the most recent opportunity-discovery pass, derived from
+    persisted audit events (spec 6/23): candidates evaluated, verified, rejected
+    and the recorded rejection reasons. Returns None if discovery never ran."""
+    events = session.execute(
+        select(AuditEvent)
+        .where(AuditEvent.recall_event_id == recall_id)
+        .order_by(AuditEvent.created_at)
+    ).scalars().all()
+    # locate the last discovery pass
+    start = None
+    for i, e in enumerate(events):
+        if e.event == "opportunity.discovery.started":
+            start = i
+    if start is None:
+        return None
+    evaluated = verified = rejected = blocked = 0
+    rejections: list[dict] = []
+    for e in events[start:]:
+        if e.event == "opportunity.discovery.started" and e is not events[start]:
+            break
+        d = e.detail if isinstance(e.detail, dict) else {}
+        if e.event == "opportunity.candidate.evaluated":
+            evaluated += 1
+        elif e.event == "opportunity.verified":
+            verified += 1
+        elif e.event == "opportunity.blocked":
+            blocked += 1
+        elif e.event == "opportunity.rejected":
+            rejected += 1
+            rejections.append({
+                "asset": _node_name(session, d.get("asset_id", "")) or "candidate",
+                "reason": d.get("reason"),
+            })
+    return {"evaluated": evaluated, "verified": verified, "rejected": rejected,
+            "blocked": blocked, "rejections": rejections}
 
 
 def opportunities_view(session: Session, recall_id: str) -> list[dict]:
@@ -229,20 +455,46 @@ def opportunities_view(session: Session, recall_id: str) -> list[dict]:
     out = []
     for o in opps:
         ev = o.evidence or {}
+        causal = ev.get("causal_path") or []
+        target_name = parent_name = None
+        for node in causal if isinstance(causal, list) else []:
+            role = node.get("role") if isinstance(node, dict) else None
+            nm = _node_name(session, str(node.get("node", ""))) if isinstance(node, dict) else None
+            if role == "downstream_derivative":
+                target_name = nm
+            elif role == "repaired_parent":
+                parent_name = nm
+        # Human-readable causal chain (spec section 19).
+        causal_names = []
+        for n in (causal if isinstance(causal, list) else []):
+            if not isinstance(n, dict):
+                continue
+            tok = str(n.get("node", ""))
+            if "source" in tok.lower():
+                causal_names.append("Source of Truth")
+            else:
+                causal_names.append(_node_name(session, tok) or tok)
+        kind_label = (o.kind or "").replace("_", " ").title() or None
         out.append({
             "id": o.id,
             "title": o.title,
             "rationale": o.rationale,
             "status": o.status,
+            "status_label": (o.status or "").replace("_", " ").title() or None,
             "kind": o.kind,
+            "kind_label": kind_label,
+            "target_name": target_name,
+            "parent_name": parent_name,
             "feasibility_state": o.feasibility_state,
             "native_operations": o.native_operations,
             "generative_operations": o.generative_operations,
             "blocked_operations": o.blocked_operations,
             "executed_operations": o.executed_operations,
-            "causal_path": ev.get("causal_path"),
+            "causal_path": causal,
+            "causal_path_names": [n for n in causal_names if n],
             "counterfactual": ev.get("counterfactual"),
             "why_enabled": ev.get("why_enabled"),
+            "dedup_ref": (o.dedup_key[:12] if o.dedup_key else None),
             "executable": o.status == "verified",
             "result": o.result or None,
         })
@@ -250,18 +502,24 @@ def opportunities_view(session: Session, recall_id: str) -> list[dict]:
 
 
 def _summary(rows: list[dict], opportunities: list[dict], recall: RecallEvent) -> dict:
-    affected = [r for r in rows if r["node_status"] in ("critical", "affected")]
-    repaired = [r for r in rows if r["job_status"] == "completed"]
-    review = [r for r in rows if r["node_status"] == "review"]
-    safe = [r for r in rows if r["node_status"] == "safe"]
-    # Operations avoided = downstream derivatives NOT regenerated because a
-    # deterministic/native path or safe classification made generation
-    # unnecessary. Counted only from real rows.
-    avoided = sum(
-        1 for r in rows
-        if r["derivation_method"] in ("crop", "resize")
-        or (r["node_status"] == "safe" and r["dependency_path"])
-    )
+    # Affected/review derive from the persisted CLASSIFICATION, not the current
+    # node colour, so completing a repair never resets these to 0 (spec 13/14).
+    affected = [r for r in rows if (r["classification"] or "").lower() in _AFFECTED_CLASSES]
+    review = [r for r in rows if (r["classification"] or "").lower() in _REVIEW_CLASSES]
+    safe = [r for r in rows if (r["classification"] or "").lower() in ("safe", "unaffected")]
+    # Repaired = a completed job that produced a real result version (spec 14).
+    repaired = [r for r in rows if r["job_status"] == "completed" and r.get("after_url")]
+    # Operations avoided = the engine's own minimal-repair-plan figure (spec 14)
+    # — generative operations replaced by deterministic/native reconstruction.
+    # Never derived from arbitrary asset-count differences.
+    plan = recall.repair_plan_graph or {}
+    avoided = plan.get("operations_avoided")
+    if not isinstance(avoided, int):
+        avoided = 0
+    # Impact aggregate (spec 13): the strongest persisted impact score across
+    # the analysed assets. Stable across repair; explains what the % means.
+    scores = [r["impact_score"] for r in rows if r["impact_score"] is not None]
+    top = max(scores) if scores else None
     verified_opps = [o for o in opportunities if o["status"] in ("verified", "executed")]
     return {
         "assets_analysed": len(rows),
@@ -271,6 +529,8 @@ def _summary(rows: list[dict], opportunities: list[dict], recall: RecallEvent) -
         "safe": len(safe),
         "operations_avoided": avoided,
         "verified_opportunities": len(verified_opps),
+        "impact_percent": round(top * 100) if top is not None else 0,
+        "impact_band": _impact_band(top),
         # B2/verification is only claimed when a repaired version actually
         # carries a stored key + hash (see rows). Never asserted otherwise.
         "storage_verified": any(r["job_status"] == "completed" and r["b2_key"] and r["sha256"]
@@ -312,6 +572,7 @@ def build_view_model(session: Session, recall: RecallEvent) -> dict:
         "assets": rows,
         "timeline": _timeline(session, recall.id),
         "opportunities": opportunities,
+        "discovery": discovery_summary(session, recall.id),
         "summary": _summary(rows, opportunities, recall),
     }
 

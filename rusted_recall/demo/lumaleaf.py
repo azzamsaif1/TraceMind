@@ -9,10 +9,13 @@ from __future__ import annotations
 import io
 
 from PIL import Image, ImageDraw
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from rusted_recall import services
 from rusted_recall.config import Settings, get_settings
 from rusted_recall.db import create_all, session_scope
+from rusted_recall.models import Asset
 from rusted_recall.storage import get_storage
 
 OLD_CLAIM = "24-Hour Vitality"
@@ -42,6 +45,30 @@ def _canvas(size, base=_BASE, claim=OLD_CLAIM, subtitle="", accent=(212, 175, 55
     return buf.getvalue()
 
 
+def _heal_hero_crop_parent(session: Session, workspace_id: str) -> bool:
+    """Idempotent self-heal for durable databases seeded before the derivative
+    topology was corrected (spec: Source → Master → Crop).
+
+    Older seeds attached "Hero Crop" to the wrong parent, so the downstream
+    reconcile opportunity was unreachable. This repoints it to the master pack
+    render if (and only if) it is currently wrong. It only touches persisted
+    demo data — no schema/model/FSM change — and is a no-op once correct.
+    """
+    master = session.execute(
+        select(Asset).where(Asset.workspace_id == workspace_id, Asset.name == "Master Pack Render")
+    ).scalars().first()
+    crop = session.execute(
+        select(Asset).where(Asset.workspace_id == workspace_id, Asset.name == "Hero Crop")
+    ).scalars().first()
+    if master is None or crop is None:
+        return False
+    if crop.parent_asset_id == master.id and crop.derivation_method == "crop":
+        return False
+    crop.parent_asset_id = master.id
+    crop.derivation_method = "crop"
+    return True
+
+
 def seed(settings: Settings | None = None) -> dict:
     settings = settings or get_settings()
     create_all()
@@ -51,8 +78,10 @@ def seed(settings: Settings | None = None) -> dict:
     new_pkg = _canvas((420, 560), base=(30, 132, 74), claim=NEW_CLAIM, subtitle="Net 330ml", accent=(233, 196, 106))
 
     with session_scope() as session:
-        if services.get_workspace_by_slug(session, "lumaleaf-botanical"):
-            return {"status": "already_seeded"}
+        existing = services.get_workspace_by_slug(session, "lumaleaf-botanical")
+        if existing:
+            healed = _heal_hero_crop_parent(session, existing.id)
+            return {"status": "already_seeded", "healed": healed}
 
         ws = services.create_workspace(session, "LumaLeaf Botanical")
 
@@ -93,13 +122,17 @@ def seed(settings: Settings | None = None) -> dict:
             description="LumaLeaf square social post featuring the product and claim",
             on_image_text=OLD_CLAIM, publication_status="published",
         )
-        # perceptual derivative / crop child of the hero
+        # Deterministic crop derivative of the MASTER PACK RENDER. Because the
+        # master is the directly-affected asset repaired by this recall, this
+        # child is the downstream derivative that remains stale afterwards — the
+        # machine-grounded reconcile opportunity (spec: Source → Master → Crop).
         services.ingest_asset(
             session, storage, ws,
-            data=_canvas((642, 402), claim=OLD_CLAIM, subtitle="Feel the 24-Hour Vitality"),
-            filename="hero-crop.png", name="Hero Crop (email header)", asset_type="email_header",
-            campaign="LumaLeaf Launch", description="cropped hero variant for email header",
-            parent_asset_id=hero.id, derivation_method="crop",
+            data=_canvas((420, 280), claim=OLD_CLAIM, subtitle="Net 330ml"),
+            filename="hero-crop.png", name="Hero Crop", asset_type="email_header",
+            campaign="LumaLeaf Launch",
+            description="cropped derivative of the master pack render for the email header",
+            parent_asset_id=master.id, derivation_method="crop",
             on_image_text=OLD_CLAIM, publication_status="published",
         )
         # story format with the claim

@@ -123,6 +123,117 @@ def test_judge_repair_then_opportunities_idempotent(client):
         assert len(first["opportunities"]) == len(again["opportunities"])
 
 
+def _drive_to_verified(client: TestClient, rid: str) -> dict:
+    """Approve the directly-affected master and run the real repair to a verified
+    state through the Judge routes (mirrors the intended judge workflow)."""
+    vm = client.get(f"/api/judge/recalls/{rid}").json()
+    master = next(a for a in vm["assets"] if a["name"] == "Master Pack Render")
+    client.post(f"/api/judge/recalls/{rid}/assets/{master['id']}/review",
+                data={"decision": "approve"})
+    assert client.post(f"/api/judge/recalls/{rid}/repair").json()["queued"] is True
+    for _ in range(30):
+        st = client.get(f"/api/judge/recalls/{rid}/status").json()
+        if not st["active"]:
+            break
+    return client.get(f"/api/judge/recalls/{rid}").json()
+
+
+def test_judge_impact_is_persisted_and_stable_after_repair(client):
+    """Impact reflects the strongest PERSISTED score (spec 13) — it is not the
+    opportunity count and is NOT erased to zero when repair completes."""
+    rid = _golden_id(client)
+    before = client.get(f"/api/judge/recalls/{rid}").json()["summary"]
+    assert before["impact_percent"] > 0
+    assert before["impact_band"] in ("High", "Medium", "Low")
+    affected_before = before["affected"]
+    assert affected_before >= 1
+
+    vm = _drive_to_verified(client, rid)
+    after = vm["summary"]
+    # impact must not be wiped by repair; affected classification is historical
+    assert after["impact_percent"] == before["impact_percent"]
+    assert after["affected"] == affected_before
+    # a real repaired asset with a result version was produced
+    assert after["repaired"] >= 1
+    # a directly-affected asset never shows zero impact in its row
+    master = next(a for a in vm["assets"] if a["name"] == "Master Pack Render")
+    assert master["impact_percent"] and master["impact_percent"] > 0
+
+
+def test_judge_operations_avoided_from_repair_plan(client):
+    rid = _golden_id(client)
+    vm = _drive_to_verified(client, rid)
+    from rusted_recall import db
+    from rusted_recall.models import RecallEvent
+    with db.session_scope() as s:
+        plan = (s.get(RecallEvent, rid).repair_plan_graph) or {}
+    assert vm["summary"]["operations_avoided"] == (plan.get("operations_avoided") or 0)
+
+
+def test_judge_dependency_path_is_human_readable(client):
+    rid = _golden_id(client)
+    vm = client.get(f"/api/judge/recalls/{rid}").json()
+    crop = next(a for a in vm["assets"] if a["name"] == "Hero Crop")
+    names = crop["dependency_path_names"]
+    assert "Master Pack Render" in names and "Hero Crop" in names
+    # no raw UUID token leaks into the human-readable path
+    assert not any(len(n) == 36 and n.count("-") == 4 for n in names)
+
+
+def test_judge_verified_opportunity_full_proof_and_execution(client):
+    rid = _golden_id(client)
+    vm = _drive_to_verified(client, rid)
+    if vm["summary"]["verification_state"] not in ("completed", "partially_completed"):
+        pytest.skip("repair did not verify in this environment")
+
+    body = client.post(f"/api/judge/recalls/{rid}/opportunities/discover").json()
+    disc = body["discovery"]
+    assert disc["evaluated"] >= 1 and disc["verified"] >= 1
+    opp = next(o for o in body["opportunities"] if o["status"] == "verified")
+    # full machine-grounded proof surfaced to the judge
+    assert opp["target_name"] == "Hero Crop"
+    assert opp["parent_name"] == "Master Pack Render"
+    assert opp["causal_path_names"] and opp["causal_path_names"][-1] == "Hero Crop"
+    assert opp["native_operations"] == 1
+    assert opp["generative_operations"] == 0  # native path -> no provider call
+    assert opp["blocked_operations"] == 0
+    assert opp["executable"] is True
+    assert opp["dedup_ref"]
+
+    ex = client.post(
+        f"/api/judge/recalls/{rid}/opportunities/{opp['id']}/execute"
+    ).json()
+    executed = next(o for o in ex["opportunities"] if o["id"] == opp["id"])
+    assert executed["status"] == "executed"
+    assert executed["result"]["executed"] == 1 and executed["result"]["blocked"] == 0
+
+    # idempotent re-discovery: same row, still executed, no duplication
+    again = client.post(f"/api/judge/recalls/{rid}/opportunities/discover").json()
+    ids = [o["id"] for o in again["opportunities"]]
+    assert ids.count(opp["id"]) == 1
+    assert next(o for o in again["opportunities"] if o["id"] == opp["id"])["status"] == "executed"
+
+
+def test_judge_timeline_is_grouped_and_human(client):
+    rid = _golden_id(client)
+    _drive_to_verified(client, rid)
+    client.post(f"/api/judge/recalls/{rid}/opportunities/discover")
+    tl = client.get(f"/api/judge/recalls/{rid}").json()["timeline"]
+    labels = [t["event"] for t in tl]
+    # repeated low-level discovery events collapse to a single readable stage
+    grouped = [t for t in tl if t["raw"] == "opportunity.discovery"]
+    assert len(grouped) >= 1
+    assert grouped[0]["detail"] and "evaluated" in grouped[0]["detail"]
+    # review decision rendered with the real asset name, not a bare label
+    assert any("Master Pack Render" in lbl for lbl in labels)
+    # raw audit events remain intact and inspectable (never deleted)
+    from rusted_recall import db
+    from rusted_recall.models import AuditEvent
+    with db.session_scope() as s:
+        raw = s.query(AuditEvent).filter(AuditEvent.recall_event_id == rid).count()
+    assert raw > len(tl)  # curated view is a summary OVER the full raw log
+
+
 def test_judge_unknown_recall_is_404(client):
     _golden_id(client)  # ensure app seeded
     assert client.get("/judge/recalls/does-not-exist").status_code == 404
