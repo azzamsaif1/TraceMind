@@ -23,7 +23,8 @@
     <div class="particles" id="particles"></div>
 
     <!-- IMPACT GAUGE -->
-    <div class="impact-gauge" id="impactGauge">
+    <div class="impact-gauge" id="impactGauge"
+        title="Impact = the engine's strongest persisted asset impact score for this recall (0–100%). Stable across repair.">
         <svg viewBox="0 0 60 60">
             <circle class="bg" cx="30" cy="30" r="25" />
             <circle class="progress" id="gaugeProgress" cx="30" cy="30" r="25" />
@@ -36,10 +37,10 @@
 
     <!-- LIVE STATS DISPLAY -->
     <div class="live-stats" id="liveStats">
-        <div class="stat-row"><span>Affected</span><span class="value" id="statAffected">0</span></div>
-        <div class="stat-row"><span>Repaired</span><span class="value green" id="statRepaired">0</span></div>
-        <div class="stat-row"><span>Ops avoided</span><span class="value highlight" id="statSaved">0</span></div>
-        <div class="stat-row"><span>Opportunities</span><span class="value" id="statOpps">0</span></div>
+        <div class="stat-row" title="Unique assets the engine classified as affected by this source change."><span>Affected</span><span class="value" id="statAffected">0</span></div>
+        <div class="stat-row" title="Assets with a completed repair job and a real repaired version."><span>Repaired</span><span class="value green" id="statRepaired">0</span></div>
+        <div class="stat-row" title="Generative operations the minimal-repair planner avoided (from the persisted repair plan)."><span>Ops avoided</span><span class="value highlight" id="statSaved">0</span></div>
+        <div class="stat-row" title="Verified/executed downstream reconciliation opportunities discovered by the engine."><span>Opportunities</span><span class="value" id="statOpps">0</span></div>
     </div>
 
     <!-- DRAWER -->

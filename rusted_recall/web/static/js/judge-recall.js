@@ -589,7 +589,14 @@
             data.timeline = st.timeline;
             data.summary = st.summary;
             renderAssets(); renderTimeline(); renderMilestones(); updateInfo(); updateLiveStats(); updateTriumph();
-            if (!st.active) { clearInterval(pollTimer); pollTimer = null; if (data.status === 'completed') triggerReverseWave(); }
+            if (!st.active) {
+                clearInterval(pollTimer); pollTimer = null;
+                if (data.status === 'completed') triggerReverseWave();
+                // /status omits primary_action + opportunities; pull the full VM
+                // once the engine settles so the footer action and the
+                // opportunities panel reflect the new (post-repair) state.
+                refreshState();
+            }
         }, 1500);
     }
 
