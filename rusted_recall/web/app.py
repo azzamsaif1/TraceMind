@@ -1148,6 +1148,21 @@ def judge_api_repair(recall_id: str, rr_session: str | None = Cookie(default=Non
     return JSONResponse({"queued": True})
 
 
+@app.post("/api/judge/recalls/{recall_id}/replay", response_model=None)
+def judge_api_replay(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
+    """Record a visual replay. Replay never mutates engine state (no repair,
+    discovery or execution); it only appends one audit event so Replay Count is
+    real and persists across refresh/reopen (directive: Impact Summary)."""
+    with session_scope() as session:
+        recall, _ = _judge_recall(session, recall_id, rr_session)
+        services.audit(
+            session, recall.workspace_id, "recall.replayed", {"recall_id": recall_id},
+            actor="judge", recall_event_id=recall_id,
+        )
+        session.flush()
+        return JSONResponse({"summary": judge_vm.build_view_model(session, recall)["summary"]})
+
+
 @app.get("/api/judge/recalls/{recall_id}/evidence", response_model=None)
 def judge_api_evidence(recall_id: str, rr_session: str | None = Cookie(default=None)) -> JSONResponse:
     with session_scope() as session:

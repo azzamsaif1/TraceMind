@@ -238,6 +238,34 @@ def test_judge_timeline_is_grouped_and_human(client):
     assert raw > len(tl)  # curated view is a summary OVER the full raw log
 
 
+def test_judge_evidence_and_replay_counts_are_engine_driven(client):
+    """Impact Summary's Evidence Count and Replay Count come from the persisted
+    audit log — replay records one audit event (visual-only, no engine mutation)
+    and both counts are identical after a fresh reopen (directive Phase 1)."""
+    rid = _golden_id(client)
+    vm = client.get(f"/api/judge/recalls/{rid}").json()
+    ev0 = vm["summary"]["evidence_count"]
+    assert ev0 >= 1  # analysis already recorded real audit events
+    assert vm["summary"]["replay_count"] == 0
+
+    # a replay records exactly one audit event and increments both counters
+    body = client.post(f"/api/judge/recalls/{rid}/replay").json()
+    assert body["summary"]["replay_count"] == 1
+    assert body["summary"]["evidence_count"] == ev0 + 1
+
+    client.post(f"/api/judge/recalls/{rid}/replay")
+
+    # counts persist across a fresh reopen (they are DB-backed, not cached)
+    reopened = client.get(f"/api/judge/recalls/{rid}").json()["summary"]
+    assert reopened["replay_count"] == 2
+    assert reopened["evidence_count"] == ev0 + 2
+
+    # replay never mutates engine outcome: impact/affected/repaired unchanged
+    assert reopened["impact_percent"] == vm["summary"]["impact_percent"]
+    assert reopened["affected"] == vm["summary"]["affected"]
+    assert reopened["repaired"] == vm["summary"]["repaired"]
+
+
 def test_judge_unknown_recall_is_404(client):
     _golden_id(client)  # ensure app seeded
     assert client.get("/judge/recalls/does-not-exist").status_code == 404
