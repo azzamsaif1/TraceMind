@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Live ** | _pending deployment — owner must authorise a public HTTPS host + managed PostgreSQL (https://rusted-recall.onrender.com|
+| **Live ** | _pending deployment — owner must authorise a public HTTPS host + managed PostgreSQL (https://rusted-recall.onrender.com)
 | **Judge Demo** | `<LIVE_URL>/run-live` — opens a production-backed recall with no account, setup or terminal |
 | **Demo Video** | _pending recording (owner)_ |
 
