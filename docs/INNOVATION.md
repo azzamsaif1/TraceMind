@@ -1,8 +1,4 @@
-# Innovation: what Rusted Recall actually invents
 
-Most "AI media" tools *generate* assets. Rusted Recall governs the **consequences of
-change** across media that already exists. The invention is a change-impact layer for
-generative media, built from four cooperating parts.
 
 ## 1. The ChangeSet (`rusted_recall/changeset.py`)
 
